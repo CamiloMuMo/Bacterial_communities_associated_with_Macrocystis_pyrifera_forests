@@ -1,0 +1,2429 @@
+library(microDecon)
+library(readxl)
+library(readr)
+library(vegan)
+library(seqinr)
+library(dplyr)
+library(phyloseq)
+
+#eliminar las sequencia (columna A), taxonomia y transformar el archivo a .xlsx. Cambiar asv->OTU_ID
+taxa.silva <- read_excel("taxa.silva.xlsx")
+#Limpiar los datos usando el método 'decon' (elimina contaminantes o ruidos)
+clean.16S <- decon(data = as.data.frame(taxa.silva),numb.blanks=3,numb.ind=31,taxa=F)
+#Extrae la tabla limpia del resultado de 'decon'
+clean.16S<-clean.16S$decon.table
+# Eliminar la segunda columna 
+clean.16S<-clean.16S[,-2]
+dim(clean.16S)
+
+#Extraer la etiqueta (OTU_ID)
+namesTax <-c("OTU_ID")
+Tax <- clean.16S[,namesTax]
+#Transponer tabla para que las muestras estén en filas y los ASVs en columnas
+Sed <- t(clean.16S[,!colnames(clean.16S)%in%namesTax])
+#Asignar nombres de columnas usando los OTU_IDs
+colnames(Sed)<-Tax
+#Ordenar alfabéticamente las muestras por su nombre
+Sed <- Sed[order(row.names(Sed)),]
+dim(Sed)
+#Calcular cuántas muestras tienen al menos una lectura para cada ASV
+N <- apply(I(Sed>0), 2, sum)
+#Ver el rango de presencia de ASVs en las muestras
+range(N)
+#Filtrar solo las columnas (ASVs) presentes en al menos una muestra
+rarefaction <- Sed[, N>0] 
+dim(rarefaction)
+#Filtrar ASVs presentes en más de una muestra
+Sed <- Sed[, N>1]
+dim(Sed)
+#Filtrar nuevamente ASVs con presencia en más de una muestra
+df <- Sed[,apply( Sed, 2, function(x) sum( x>0)) > 1] 
+dim(df)
+
+S <- specnumber(rarefaction)
+(raremax <- min(rowSums(rarefaction)))
+Srare <- rarefy(rarefaction, raremax)
+plot(S, Srare, xlab = "Observed No. of ASV", ylab = "Rarefied No. of ASV")
+abline(0, 1)
+rarecurve(rarefaction, step = 20, col = "#404788FF", main="Rarefaction Curves 16S", ylab="ASV Observed", cex=0.8)
+
+sample_depths <- rowSums(rarefaction)
+min_sample <- names(sample_depths[sample_depths == min(sample_depths)])
+min_sample
+sample_depths[sample_depths == min(sample_depths)]
+sort(sample_depths)
+
+#Guardar los nombres de las columnas del dataframe 'df' (los ASVs seleccionados)
+names=colnames(df)
+#Cargar la tabla de taxonomía y secuencias (archivo .txt)
+table<-read.table("taxa.silva.txt", header = T, sep="\t")
+#Conservar solo las dos primeras columnas (secuencia y nombre del ASV)
+table<-table[,1:2]
+#Volver a definir 'names' (para asergurarse)
+names=colnames(df)
+#Filtrar la tabla para conservar solo las secuencias que están en los ASVs seleccionados
+filtered_data <- filter(table, ASV %in% names)
+#Escribir un archivo FASTA con las secuencias filtradas (ASV = secuencia, nombre = ID del ASV)
+write.fasta(sequences =as.list(filtered_data[,1]),names= filtered_data[,2],file.out = "silva.fasta")
+#Leer el archivo FASTA generado (las secuencias están en mayúsculas por defecto, aquí se fuerzan a minúsculas)
+silva<-read.fasta(file="silva.fasta", as.string = TRUE, forceDNAtolower = TRUE)
+#Convertir el objeto a clase 'SeqFastadna' para trabajar con secuencias en análisis posteriores
+silva.2<-as.SeqFastadna(silva)
+is.SeqFastadna(silva.2)
+#Mostrar resumen de la segunda secuencia (nucleótidos, longitud, etc.)
+summary(silva.2[[2]])
+
+
+#Make relative
+library(phyloseq)
+library(funrar)
+#Convertir la tabla de abundancia absoluta a abundancia relativa (%)
+rel_table<-make_relative(df)
+#Transponer la tabla relativa (para tener ASVs como filas y muestras como columnas)
+rel_table<-t(rel_table)
+#Guardar la tabla de abundancia relativa en un archivo CSV
+write.csv(rel_table,file="rel_table16S")
+#Transponer la tabla original de abundancia absoluta
+df<-t(df)
+write.csv(df,file="table16S")
+
+#Cargar nuevamente el archivo de taxonomía y secuencias
+table<-read.table("taxa.silva.txt", header = T, sep="\t")
+#Agregar la taxonomia a table16S.xlsx a partir de taxa.silva
+Reads <- read_xlsx("table16S.xlsx")
+colnames(Reads)
+Reads<-Reads[,-1]
+tax<-table[,c(2, 37:42)]
+
+d <- read_xlsx("table16S.xlsx")
+dim(d)
+#Cargar Metadata
+env<-read.csv("Env.csv")
+#De d seleccionar ASV (1) y la Taxa (33:38) esto variara segun numero de muestras
+tax<-d[,c(1,33:38)]
+#Solo selecciona los ASVs
+reads<-d[,c(1:32)]
+#Muestra el nombre de las columnas
+colnames(reads)
+#FORMATO PARA PHYLOSEQ
+#Convertimos las tablas de abundancia (ASVs), taxonomía y metadata en data frames individuales.
+#Necesario para preparar la estructura que requiere el objeto phyloseq.
+asv_mat<- reads     # Matriz de abundancias por muestra
+tax_mat<- tax       # Tabla de taxonomía asignada a cada ASV
+samples_df <- env   # Tabla de metadatos ambientales por muestra
+
+#DEFINIR FILAS (rownames) PARA CADA TABLA 
+# En phyloseq, las filas de la matriz de ASVs deben tener los nombres de los ASVs,
+# y la metadata debe tener los IDs de muestra como rownames. Aquí lo preparamos:
+asv_mat <- as.data.frame(asv_mat)        
+tax_mat <- as.data.frame(tax_mat)     
+
+row.names(asv_mat) <- asv_mat$ASV       # Asigna la columna ASV como nombre de fila
+asv_mat <- asv_mat%>% select (-ASV)    # Elimina columna ASV (ya está como rowname)
+
+row.names(tax_mat) <- tax_mat$ASV       # Asigna la columna ASV como nombre de fila
+tax_mat <- tax_mat%>% select (-ASV)     # Elimina columna ASV
+
+row.names(samples_df) <- samples_df$ID    # Asigna la columna ASV como nombre de fila
+samples_df <- samples_df %>% select (-ID) # Elimina columna ID
+
+#CONVERTIR A MATRICES
+# phyloseq requiere que las tablas de abundancia y taxonomía estén en formato matriz.
+# Aquí se hace la conversión.
+asv_mat <- as.matrix(asv_mat)    # Matriz de abundancia (ASVs como filas, muestras como columnas)
+tax_mat <- as.matrix(tax_mat)      # Matriz de taxonomía (ASVs como filas, niveles taxonómicos como columnas)
+
+#CREAR OBJETO PHYLOSEQ
+#Se crean los objetos individuales y luego se combinan en un único objeto phyloseq.
+ASV = otu_table(asv_mat, taxa_are_rows = TRUE)   # Crea la tabla de abundancia
+TAX = tax_table(tax_mat)                         # Crea la tabla de taxonomía
+samples = sample_data(samples_df)                # Crea el objeto de metadata ambiental
+#Se junta todo en un objeto phyloseq
+Sed_16S <- phyloseq(ASV, TAX, samples)
+Sed_16S<-Sed_16S %>% subset_taxa(Kingdom !="Archaea")     
+Sed_16S<-Sed_16S %>% subset_taxa(Order != "Chloroplast")     
+Sed_16S<-Sed_16S %>% subset_taxa(Family !="Mitochondria")     
+Sed_16S
+
+# Hill (1)-----
+library(tidyr)
+library(ggplot2)
+library(iNEXT)
+
+# Solo sedimentos
+sed_hill <- subset_samples(Sed_16S, Type == "Sediment")
+
+# Eliminar ASVs que queden con abundancia 0 después del subset
+sed_hill <- prune_taxa(taxa_sums(sed_hill) > 0, sed_hill)
+
+sed_hill
+nsamples(sed_hill)
+ntaxa(sed_hill)
+sample_sums(sed_hill)
+
+meta_hill <- data.frame(sample_data(sed_hill))
+
+table(meta_hill$Site, meta_hill$Date)
+
+hill_counts <- as(otu_table(sed_hill), "matrix")
+
+if(taxa_are_rows(sed_hill)){hill_counts <- t(hill_counts)}
+
+dim(hill_counts)
+
+# stopifnot() comprueba que abundancias y metadata estén exactamente en el mismo orden
+stopifnot(identical(rownames(hill_counts), rownames(meta_hill)))
+
+# Hill q = 0, 1 y 2
+D0 <- specnumber(hill_counts)
+
+D1 <- exp(diversity(hill_counts, index = "shannon"))
+
+D2 <- diversity(hill_counts, index = "invsimpson")
+
+hill <- data.frame(ID = rownames(hill_counts),
+  D0 = D0, D1 = D1, D2 = D2, meta_hill[, c("Site", "Date")])
+
+head(hill)
+
+# Cobertura: check obligatorio
+hill_input <- lapply(seq_len(nrow(hill_counts)),
+  function(i) hill_counts[i, hill_counts[i, ] > 0])
+
+names(hill_input) <- rownames(hill_counts)
+
+coverage <- DataInfo(hill_input, datatype = "abundance")
+
+coverage
+
+summary(coverage$SC)
+range(coverage$SC)
+
+# Resumen descriptivo
+hill_summary <- hill %>% group_by(Date, Site) %>% summarise(n = n(),
+    D0_median = median(D0), D0_IQR = IQR(D0),
+    D1_median = median(D1), D1_IQR = IQR(D1),
+    D2_median = median(D2), D2_IQR = IQR(D2), .groups = "drop")
+
+hill_summary
+
+# Estadística espacial dentro de cada fecha
+hill_aug <- hill %>% filter(Date == "August")
+
+hill_mar <- hill %>% filter(Date == "March")
+
+# August
+kruskal.test(D0 ~ Site, data = hill_aug)
+kruskal.test(D1 ~ Site, data = hill_aug)
+kruskal.test(D2 ~ Site, data = hill_aug)
+
+# March
+kruskal.test(D0 ~ Site, data = hill_mar)
+kruskal.test(D1 ~ Site, data = hill_mar)
+kruskal.test(D2 ~ Site, data = hill_mar)
+
+# HILL - KRUSKAL-WALLIS EXACTO----
+#
+# Debido al bajo y desigual número de réplicas, las comparaciones espaciales
+# se evalúan mediante la distribución exacta de Kruskal-Wallis.
+
+# Factores para los analisis de Hill----
+
+hill$Site <- factor(hill$Site, levels = c("Bahia_Buzo","San_Gregorio","Buque_Quemado"))
+
+hill$Date <- factor(hill$Date, levels = c("August", "March"))
+
+hill_aug <- droplevels(hill %>% filter(Date == "August"))
+
+hill_mar <- droplevels(hill %>% filter(Date == "March"))
+
+str(hill_aug$Site)
+str(hill_mar$Site)
+
+install.packages("ANSM5")   # solo la primera vez
+library(ANSM5)
+
+hill_aug_exact <- hill_aug %>% arrange(Site) %>% droplevels()
+
+hill_mar_exact <- hill_mar %>% arrange(Site) %>% droplevels()
+
+# Check: los grupos deben quedar consecutivos
+hill_aug_exact[, c("ID", "Site")]
+hill_mar_exact[, c("ID", "Site")]
+
+table(hill_aug_exact$Site)
+table(hill_mar_exact$Site)
+
+# August
+ANSM5::kruskal.wallis(hill_aug_exact$D0, hill_aug_exact$Site, do.exact = TRUE, do.asymp = TRUE)
+
+ANSM5::kruskal.wallis(hill_aug_exact$D1, hill_aug_exact$Site, do.exact = TRUE, do.asymp = TRUE)
+
+ANSM5::kruskal.wallis(hill_aug_exact$D2, hill_aug_exact$Site, do.exact = TRUE, do.asymp = TRUE)
+
+# March
+ANSM5::kruskal.wallis(hill_mar_exact$D0, hill_mar_exact$Site, do.exact = TRUE, do.asymp = TRUE)
+
+ANSM5::kruskal.wallis(hill_mar_exact$D1, hill_mar_exact$Site, do.exact = TRUE, do.asymp = TRUE)
+
+ANSM5::kruskal.wallis(hill_mar_exact$D2, hill_mar_exact$Site, do.exact = TRUE, do.asymp = TRUE)
+
+# Check de empates antes de los post hoc----
+
+sapply(hill_aug_exact[, c("D0", "D1", "D2")], anyDuplicated)
+
+sapply(hill_mar_exact[, c("D0", "D1", "D2")], anyDuplicated)
+
+# POST HOC exactos - August----
+
+pairwise.wilcox.test(hill_aug_exact$D1, hill_aug_exact$Site,
+  p.adjust.method = "holm", exact = TRUE)
+
+# POST HOC exactos - March----
+
+pairwise.wilcox.test(hill_mar_exact$D0, hill_mar_exact$Site,
+  p.adjust.method = "holm", exact = TRUE)
+
+pairwise.wilcox.test(hill_mar_exact$D1, hill_mar_exact$Site,
+  p.adjust.method = "holm", exact = TRUE)
+
+pairwise.wilcox.test(hill_mar_exact$D2, hill_mar_exact$Site,
+  p.adjust.method = "holm", exact = TRUE)
+
+# Figura final - Alpha (Hill)----
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggpubr)
+
+# Colores de los sitios
+site_colors <- c(
+  "Bahia_Buzo"    = "#1b9e77", "San_Gregorio"  = "#d95f02","Buque_Quemado" = "#7570b3")
+
+# Formato largo
+hill_long <- hill %>%
+  pivot_longer(cols = c(D0, D1, D2),
+    names_to = "Hill_Order", values_to = "Diversity"  ) %>%
+  mutate(Site = factor(Site, levels = c(
+        "Bahia_Buzo", "San_Gregorio", "Buque_Quemado")),
+    Date = factor(Date, levels = c("August", "March")),
+    Hill_Order = factor(
+      Hill_Order,
+      levels = c("D0", "D1", "D2"),
+      labels = c("q = 0", "q = 1", "q = 2")))
+
+# Significancia POST HOC----
+
+sig_march <- hill_long %>%
+  filter(Date == "March") %>%
+  group_by(Date, Hill_Order) %>%
+  summarise(y.position = max(Diversity) * 1.10, .groups = "drop") %>%
+  mutate(group1 = "San_Gregorio", group2 = "Buque_Quemado", label = "p = 0.024")
+
+sig_march
+
+kw_aug <- hill_long %>%
+  filter( Date == "August", Hill_Order == "q = 1") %>%
+  summarise(y = max(Diversity) * 1.10) %>%
+  mutate( Date = factor("August", levels = c("August", "March")),
+    Hill_Order = factor("q = 1",
+      levels = c("q = 0", "q = 1", "q = 2")),
+    label = "KW exact p = 0.025")
+
+# Figura Hill----
+
+Fig_Hill <- ggplot(
+  hill_long,
+  aes(x = Site, y = Diversity, fill = Site)) +
+    geom_boxplot(width = 0.62, alpha = 0.70, color = "black", linewidth = 0.55, outlier.shape = NA) +
+    geom_jitter(shape = 21, color = "black", width = 0.08, size = 2.5, stroke = 0.4, alpha = 0.95) +
+    # Contrastes significativos de March
+  ggpubr::stat_pvalue_manual(
+    sig_march,
+    label = "label", xmin = "group1", xmax = "group2", y.position = "y.position",
+    tip.length = 0.015, bracket.size = 0.5, size =  6, inherit.aes = FALSE) +
+  
+  # resultados significativo de August q1
+  geom_text(data = kw_aug,
+    aes(x = 1, y = y, label = label),
+    inherit.aes = FALSE, hjust = 0, size = 6) +
+    scale_fill_manual(values = site_colors) +
+    scale_x_discrete(
+    labels = c(
+      "Bahia_Buzo" = "Bahía Buzo",
+      "San_Gregorio" = "San Gregorio",
+      "Buque_Quemado" = "Buque Quemado")) +
+    scale_y_continuous(expand = expansion(mult = c(0.04, 0.20))) +
+    facet_wrap(
+    vars(Date, Hill_Order), nrow = 2, scales = "free_y") +  
+  labs(x = NULL, y = "Hill diversity (effective number of ASVs)") +
+  theme_bw(base_size = 13) +
+  theme(
+    strip.background = element_rect(fill = "#F2F2F2"),
+    strip.text = element_text(face = "bold", size = 15),
+    axis.text.x = element_text(size = 15, angle = 45, vjust = 1, hjust = 1),
+    axis.text.y.left = element_text(size = 15),
+    axis.title.y = element_text(size = 15),    legend.position = "none")
+
+
+Fig_Hill
+ggsave("Fig2_Hill_diversity.pdf",
+  Fig_Hill,  width = 13,  height = 9.5,  units = "in")
+
+# Beta diversity - preparacion----
+
+library(phyloseq)
+library(vegan)
+library(dplyr)
+library(ape)
+library(ggplot2)
+
+# Solo sedimentos
+sed_beta <- subset_samples(Sed_16S, Type == "Sediment")
+
+# Eliminar ASVs con abundancia cero después del subset
+sed_beta <- prune_taxa(taxa_sums(sed_beta) > 0, sed_beta)
+
+sed_beta
+nsamples(sed_beta)
+ntaxa(sed_beta)
+sample_sums(sed_beta)
+
+# Matriz de comunidad----
+
+otu_beta <- as(otu_table(sed_beta), "matrix")
+
+if(taxa_are_rows(sed_beta)){otu_beta <- t(otu_beta)}
+
+meta_beta <- data.frame(sample_data(sed_beta))
+
+# Ordenar metadata exactamente igual que la matriz
+meta_beta <- meta_beta[rownames(otu_beta), , drop = FALSE]
+
+meta_beta$Site <- factor(meta_beta$Site, levels = c("Bahia_Buzo","San_Gregorio","Buque_Quemado"))
+
+meta_beta$Date <- factor(meta_beta$Date, levels = c("August", "March"))
+
+# Checks
+dim(otu_beta)
+table(meta_beta$Site, meta_beta$Date)
+
+stopifnot(identical(rownames(otu_beta),rownames(meta_beta)))
+
+sum(is.na(otu_beta))
+
+# Transformacion Hellinger----
+
+otu_hell <- decostand(otu_beta, method = "hellinger")
+
+# Checks
+dim(otu_hell)
+sum(is.na(otu_hell))
+
+# Hellinger: la suma de cuadrados de cada perfil debe ser 1
+summary(rowSums(otu_hell^2))
+# Aplicacion distancia Euclediana
+dist_beta <- dist(otu_hell, method = "euclidean")
+
+dist_beta
+
+sum(is.na(as.matrix(dist_beta)))
+
+# PCoA----
+
+pcoa_beta <- ape::pcoa(dist_beta)
+
+# Varianza explicada
+pcoa_beta$values[1:5, ]
+
+# Coordenadas
+pcoa_scores <- data.frame(
+  PCoA1 = pcoa_beta$vectors[, 1],
+  PCoA2 = pcoa_beta$vectors[, 2],
+  ID = rownames(pcoa_beta$vectors))
+
+pcoa_scores <- cbind(pcoa_scores, meta_beta[pcoa_scores$ID, c("Site", "Date")])
+
+head(pcoa_scores)
+# Varianza explicada por los dos primeros ejes
+pcoa_var1 <- round( 100 * pcoa_beta$values$Relative_eig[1], 1)
+
+pcoa_var2 <- round(100 * pcoa_beta$values$Relative_eig[2], 1)
+
+pcoa_var1
+pcoa_var2
+
+# PERMDISP - Grupos Site x Date----
+
+meta_beta$Group <- interaction(meta_beta$Site, meta_beta$Date, drop = TRUE)
+
+table(meta_beta$Group)
+
+disp_group <- betadisper(
+  dist_beta, meta_beta$Group, type = "median", bias.adjust = TRUE)
+
+set.seed(123)
+disp_group_test <- permutest(disp_group, permutations = 9999)
+
+disp_group_test
+
+# PERMANOVA - Modelo global Site x Date----
+
+set.seed(123)
+# Esta primera salida responde únicamente:
+# ¿el conjunto de términos Site + Date + Site×Date explica composición bacteriana?
+permanova_full <- adonis2(dist_beta ~ Site * Date, data = meta_beta, permutations = 9999)
+
+permanova_full
+
+# PERMANOVA - Interaccion Site x Date----
+# Si Site:Date resulta significativo, significa que:
+#    el efecto de la fecha depende del sitio
+#             y simultáneamente:
+# las diferencias entre sitios dependen de la fecha
+
+set.seed(123)
+
+permanova_interaction <- adonis2(
+  dist_beta ~ Site * Date, data = meta_beta, permutations = 9999, by = "margin")
+
+permanova_interaction
+
+# Efectos simples - Site dentro de August----
+
+aug_idx <- meta_beta$Date == "August"
+
+otu_aug <- otu_hell[aug_idx, , drop = FALSE]
+meta_aug <- droplevels(meta_beta[aug_idx, , drop = FALSE])
+
+dist_aug <- dist(otu_aug, method = "euclidean")
+
+table(meta_aug$Site)
+
+set.seed(123)
+permanova_aug <- adonis2(dist_aug ~ Site, data = meta_aug, permutations = 9999)
+
+permanova_aug
+
+disp_aug <- betadisper(dist_aug, meta_aug$Site, type = "median", bias.adjust = TRUE)
+
+set.seed(123)
+disp_aug_test <- permutest(disp_aug, permutations = 9999)
+
+disp_aug_test
+
+# Efectos simples2 - Site dentro de March----
+
+mar_idx <- meta_beta$Date == "March"
+
+otu_mar <- otu_hell[mar_idx, , drop = FALSE]
+meta_mar <- droplevels(meta_beta[mar_idx, , drop = FALSE])
+
+dist_mar <- dist(otu_mar, method = "euclidean")
+
+table(meta_mar$Site)
+
+set.seed(123)
+permanova_mar <- adonis2(dist_mar ~ Site, data = meta_mar,permutations = 9999)
+
+permanova_mar
+
+disp_mar <- betadisper(dist_mar, meta_mar$Site, type = "median", bias.adjust = TRUE)
+
+set.seed(123)
+disp_mar_test <- permutest(disp_mar, permutations = 9999)
+
+disp_mar_test
+
+# Efectos simples - Site dentro de BB----
+
+bb_idx <- meta_beta$Site == "Bahia_Buzo"
+
+otu_bb <- otu_hell[bb_idx, , drop = FALSE]
+meta_bb <- droplevels(meta_beta[bb_idx, , drop = FALSE])
+
+dist_bb <- dist(otu_bb, method = "euclidean")
+
+table(meta_bb$Date)
+
+set.seed(123)
+permanova_bb <- adonis2(dist_bb ~ Date, data = meta_bb, permutations = 9999)
+
+permanova_bb
+
+disp_bb <- betadisper(dist_bb, meta_bb$Date, type = "median", bias.adjust = TRUE)
+
+set.seed(123)
+disp_bb_test <- permutest(disp_bb, permutations = 9999)
+
+disp_bb_test
+
+# Efectos simples - Site dentro de SG----
+
+sg_idx <- meta_beta$Site == "San_Gregorio"
+
+otu_sg <- otu_hell[sg_idx, , drop = FALSE]
+meta_sg <- droplevels(meta_beta[sg_idx, , drop = FALSE])
+
+dist_sg <- dist(otu_sg, method = "euclidean")
+
+table(meta_sg$Date)
+
+set.seed(123)
+permanova_sg <- adonis2(dist_sg ~ Date, data = meta_sg, permutations = 9999)
+
+permanova_sg
+
+disp_sg <- betadisper(dist_sg, meta_sg$Date, type = "median", bias.adjust = TRUE)
+
+set.seed(123)
+disp_sg_test <- permutest(disp_sg, permutations = 9999)
+
+disp_sg_test
+
+# Efectos simples - Site dentro de BQ----
+
+bq_idx <- meta_beta$Site == "Buque_Quemado"
+
+otu_bq <- otu_hell[bq_idx, , drop = FALSE]
+meta_bq <- droplevels(meta_beta[bq_idx, , drop = FALSE])
+
+dist_bq <- dist(otu_bq, method = "euclidean")
+
+table(meta_bq$Date)
+
+set.seed(123)
+permanova_bq <- adonis2(dist_bq ~ Date, data = meta_bq, permutations = 9999)
+
+permanova_bq
+
+disp_bq <- betadisper(dist_bq, meta_bq$Date, type = "median", bias.adjust = TRUE)
+
+set.seed(123)
+disp_bq_test <- permutest(disp_bq, permutations = 9999)
+
+disp_bq_test
+
+# Correccion multiple - Efectos temporales----
+
+p_temporal <- c(
+  Bahia_Buzo = 0.0194,
+  San_Gregorio = 0.04762,
+  Buque_Quemado = 0.0077)
+
+p.adjust(p_temporal, method = "holm")
+
+# Correccion multiple - Efectos espaciales----
+
+p_spatial <- c(
+  August = 0.0001,
+  March = 0.0001)
+
+p.adjust(p_spatial, method = "holm")
+
+# POST HOC espacial - August----
+
+# BB vs SG
+idx <- meta_aug$Site %in% c("Bahia_Buzo", "San_Gregorio")
+
+meta_pair <- droplevels(meta_aug[idx, , drop = FALSE])
+dist_pair <- dist(otu_aug[idx, , drop = FALSE])
+
+set.seed(123)
+adonis2(dist_pair ~ Site,data = meta_pair,permutations = 9999)
+
+disp_pair <- betadisper(dist_pair,meta_pair$Site, type = "median",bias.adjust = TRUE)
+
+set.seed(123)
+permutest(disp_pair, permutations = 9999)
+
+idx <- meta_aug$Site %in% c("Bahia_Buzo", "Buque_Quemado")
+
+meta_pair <- droplevels(meta_aug[idx, , drop = FALSE])
+dist_pair <- dist(otu_aug[idx, , drop = FALSE])
+
+set.seed(123)
+adonis2(dist_pair ~ Site, data = meta_pair, permutations = 9999)
+
+disp_pair <- betadisper(dist_pair,meta_pair$Site,type = "median",bias.adjust = TRUE)
+
+set.seed(123)
+permutest(disp_pair,permutations = 9999)
+
+idx <- meta_aug$Site %in% c("San_Gregorio", "Buque_Quemado")
+
+meta_pair <- droplevels(meta_aug[idx, , drop = FALSE])
+dist_pair <- dist(otu_aug[idx, , drop = FALSE])
+
+set.seed(123)
+adonis2(dist_pair ~ Site, data = meta_pair, permutations = 9999)
+
+disp_pair <- betadisper(dist_pair,meta_pair$Site, type = "median",bias.adjust = TRUE)
+
+set.seed(123)
+permutest(disp_pair,permutations = 9999)
+
+p_aug_pair <- c(
+  BB_SG = 0.04762,
+  BB_BQ = 0.0071,
+  SG_BQ = 0.04762
+)
+
+p.adjust(p_aug_pair, method = "holm")
+
+# POST HOC ESPACIAL - March----
+
+# BB vs SG
+idx <- meta_mar$Site %in% c("Bahia_Buzo", "San_Gregorio")
+
+meta_pair <- droplevels(meta_mar[idx, , drop = FALSE])
+dist_pair <- dist(otu_mar[idx, , drop = FALSE])
+
+set.seed(123)
+adonis2(dist_pair ~ Site, data = meta_pair, permutations = 9999)
+
+disp_pair <- betadisper(dist_pair,meta_pair$Site, type = "median",bias.adjust = TRUE)
+
+set.seed(123)
+permutest(disp_pair,permutations = 9999)
+
+# BB vs BQ
+idx <- meta_mar$Site %in% c("Bahia_Buzo", "Buque_Quemado")
+
+meta_pair <- droplevels(meta_mar[idx, , drop = FALSE])
+dist_pair <- dist(otu_mar[idx, , drop = FALSE])
+
+set.seed(123)
+adonis2(dist_pair ~ Site, data = meta_pair, permutations = 9999)
+
+disp_pair <- betadisper(dist_pair,meta_pair$Site, type = "median",bias.adjust = TRUE)
+
+set.seed(123)
+permutest(disp_pair,permutations = 9999)
+
+# SG vs BQ
+idx <- meta_mar$Site %in% c("San_Gregorio", "Buque_Quemado")
+
+meta_pair <- droplevels(meta_mar[idx, , drop = FALSE])
+dist_pair <- dist(otu_mar[idx, , drop = FALSE])
+
+set.seed(123)
+adonis2(dist_pair ~ Site, data = meta_pair, permutations = 9999)
+
+disp_pair <- betadisper(dist_pair,meta_pair$Site, type = "median",bias.adjust = TRUE)
+
+set.seed(123)
+permutest(disp_pair,permutations = 9999)
+
+p_mar_pair <- c(
+  BB_SG = 0.0190,
+  BB_BQ = 0.0190,
+  SG_BQ = 0.0071)
+
+p.adjust(p_mar_pair, method = "holm")
+
+# Figura - PCoA BETA DIVERSITY----
+
+library(ggplot2)
+
+site_colors <- c("Bahia_Buzo"    = "#1b9e77", "San_Gregorio"  = "#d95f02", "Buque_Quemado" = "#7570b3")
+
+date_shapes <- c("August" = 21,"March"  = 24)
+
+Fig_PCoA <- ggplot(
+  pcoa_scores,
+  aes(x = PCoA1,y = PCoA2,fill = Site,shape = Date)) +
+    geom_hline(yintercept = 0,linewidth = 0.35, linetype = "dashed") +
+    geom_vline(xintercept = 0,linewidth = 0.35, linetype = "dashed") +
+    geom_point(size = 13,color = "black",stroke = 0.6,alpha = 0.8) +
+    scale_fill_manual(
+    values = c("Bahia_Buzo"    = "#1b9e77","San_Gregorio"  = "#d95f02","Buque_Quemado" = "#7570b3"),
+    labels = c(
+      "Bahia_Buzo"    = "Bahía Buzo",
+      "San_Gregorio"  = "San Gregorio",
+      "Buque_Quemado" = "Buque Quemado")) +
+    scale_shape_manual(values = c("August" = 21, "March"  = 24)) +
+    guides( fill = guide_legend(
+      title = "Site",
+      override.aes = list(shape = 21, size = 5, color = "black",  alpha = 1)),
+        shape = guide_legend(title = "Date",
+      override.aes = list(size = 5, fill = "white", color = "black",alpha = 1))) +
+    labs(
+    x = paste0("PCoA1 (", pcoa_var1, "%)"),
+    y = paste0("PCoA2 (", pcoa_var2, "%)")) +
+    annotate("text",x = Inf,y = Inf,
+    label = "Site × Date: PERMANOVA p < 0.001",
+    hjust = 1.08, vjust = 1.6, size = 6.5) +
+  theme_bw(base_size = 13) +
+  theme(axis.text.x = element_text(size = 20), 
+        axis.text.y = element_text(size = 20),
+        axis.title.x = element_text(size = 20),   
+        axis.title.y = element_text(size = 20),   
+        legend.text  = element_text(size = 20),
+        panel.grid.major = element_line(color = "white", linewidth = 0.6),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "gray95", colour = NA),
+        plot.background = element_rect(fill = "white", colour = NA),
+        legend.title = element_text(face = "bold", size = 20),
+        strip.text = element_text(size = 12, face = "bold")) 
+
+Fig_PCoA
+
+ggsave(
+  "Fig3_PCoA_beta_diversity.pdf",
+  Fig_PCoA,
+  width = 13,
+  height = 9.5,
+  units = "in")
+
+# NMDS-distancia Hellinger-Euclideana----
+
+library(vegan)
+
+set.seed(123)
+
+nmds_beta <- metaMDS(dist_beta, k = 2,trymax = 500,
+  autotransform = FALSE,trace = FALSE)
+
+nmds_beta
+nmds_beta$stress
+
+# Scores NMDS----
+
+nmds_scores <- as.data.frame(scores(nmds_beta, display = "sites"))
+
+colnames(nmds_scores)[1:2] <- c("NMDS1", "NMDS2")
+
+nmds_scores$ID <- rownames(nmds_scores)
+
+nmds_scores <- cbind(nmds_scores,  meta_beta[nmds_scores$ID, c("Site", "Date")])
+
+head(nmds_scores)
+
+# Figura final NMDS----
+
+library(dplyr)
+library(ggplot2)
+
+# Colores
+colores_sitios <- c(
+  "Bahia_Buzo"    = "#1b9e77",
+  "San_Gregorio"  = "#d95f02",
+  "Buque_Quemado" = "#7570b3")
+
+# Formas
+date_shapes <- c( "August" = 16,"March"  = 17)
+
+# CONVEX HULLS
+# Solo para grupos con >= 3 muestras
+
+nmds_hull <- nmds_scores %>%
+  group_by(Site, Date) %>%
+  filter(n() >= 3) %>%
+  slice(chull(NMDS1, NMDS2)) %>%
+  ungroup()
+
+# NMDS
+
+Fig_NMDS <- ggplot(nmds_scores,
+  aes(x = NMDS1, y = NMDS2)) +
+  # Convex hulls
+  geom_polygon(
+    data = nmds_hull,
+    aes(fill = Site,
+      group = interaction(Site, Date)),
+    alpha = 0.35, linetype = "dotted",color = "black",linewidth = 0.5 ) +
+  # Muestras
+  geom_point(
+    aes(color = Site, shape = Date),size = 7, alpha = 0.85) +
+  # Colores
+  scale_color_manual(
+    values = colores_sitios,
+    labels = c(
+      "Bahia_Buzo"    = "Bahía Buzo",
+      "San_Gregorio"  = "San Gregorio",
+      "Buque_Quemado" = "Buque Quemado")) +
+  scale_fill_manual(values = colores_sitios,guide = "none") +
+  # Formas
+  scale_shape_manual(
+    values = date_shapes,
+    labels = c(
+      "August" = "August",
+      "March"  = "March")) +
+  # Ejes
+  scale_x_continuous(
+    breaks = scales::pretty_breaks(n = 5)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 5)) +
+  coord_equal() +
+    annotate("text",x = Inf,y = Inf,
+    label = paste0( "Stress = 0.073 "),
+    hjust = 1.1,  vjust = 1.4,size = 6) +
+  # Leyendas
+  guides(color = guide_legend(
+      title = "Site",
+      override.aes = list(size = 6, alpha = 1)),
+      shape = guide_legend(
+      title = "Date",
+      override.aes = list(size = 6, color = "black",alpha = 1)) ) +
+  labs(x = "NMDS1", y = "NMDS2", color = "Site", shape = "Sampling period") +
+  theme_bw() +
+  theme(aspect.ratio = 1,
+    axis.text.x = element_text(size = 20),
+    axis.text.y = element_text(size = 20),
+    axis.title.x = element_text(size = 20),
+    axis.title.y = element_text(size = 20),
+    # estética original
+    panel.grid.major = element_line(color = "white", linewidth = 0.6),
+    panel.grid.minor = element_blank(),
+    panel.background = element_rect(fill = "gray95", colour = NA),
+    plot.background = element_rect(fill = "white", colour = NA),
+    legend.title = element_text(size = 16,face = "bold"),  
+    legend.text = element_text(size = 15),
+    legend.position = "right")
+
+Fig_NMDS
+
+ggsave(
+  "Fig3_NMDS_beta_diversity.pdf",
+  Fig_NMDS,
+  width = 13,
+  height = 9.5,
+  units = "in")
+
+# PROCRUSTES - PCoA vs NMDS----
+
+#pcoa_xy <- pcoa_scores[, c("PCoA1", "PCoA2")]
+#rownames(pcoa_xy) <- pcoa_scores$ID
+
+#nmds_xy <- nmds_scores[, c("NMDS1", "NMDS2")]
+#rownames(nmds_xy) <- nmds_scores$ID
+
+# Asegurar mismo orden
+#nmds_xy <- nmds_xy[rownames(pcoa_xy), ]
+
+#set.seed(123)
+#protest_beta <- protest(pcoa_xy,nmds_xy,permutations = 9999)
+
+#protest_beta
+
+# RDA - IMPUTACIÓN RESTRINGIDA----
+
+vars_rda <- c(
+  "Organic Matter (%)",
+  "Total N (%)",
+  "Olsen P (mg/kg)")
+
+# Solo muestras con al menos 2/3 variables realmente observadas
+env_imp <- env_audit %>%
+  filter(n_observed >= 2)
+
+nrow(env_imp)
+
+table(env_imp$n_observed)
+# Comprueba específicamente que muestras quedaron
+env_imp %>% filter(n_observed == 2)
+
+env_imp %>%  filter(Site == "San_Gregorio",  Date == "August")
+# Guardar qué valores son observados y cuáles imputados
+env_imp <- env_imp %>%
+  mutate(
+    OM_imputed = is.na(`Organic Matter (%)`),
+    TotalN_imputed = is.na(`Total N (%)`),
+    OlsenP_imputed = is.na(`Olsen P (mg/kg)`)
+  )
+
+colSums(env_imp[, c("OM_imputed","TotalN_imputed","OlsenP_imputed")])
+
+# missForest - SOLO VARIABLES AMBIENTALES----
+
+library(missForest)
+
+env_imp_matrix <- env_imp %>% select(all_of(vars_rda))
+
+set.seed(123)
+
+mf_env <- missForest(env_imp_matrix,ntree = 500,  maxiter = 10,
+  variablewise = TRUE,verbose = TRUE)
+
+mf_env$OOBerror
+
+env_imp_values <- mf_env$ximp
+# Reconstruir la tabla manteniendo IDs y metadata
+env_imp_final <- env_imp %>%
+  select(ID, Site, Date, n_observed, OM_imputed,
+    TotalN_imputed, OlsenP_imputed) %>%
+  bind_cols(as.data.frame(env_imp_values))
+# visualizamos solo los valores imputados
+env_imp_final %>%
+  filter(OM_imputed |TotalN_imputed |OlsenP_imputed) %>%
+  select(ID, Site, Date, all_of(vars_rda), OM_imputed,
+         TotalN_imputed, OlsenP_imputed)
+
+# ESTABILIDAD DE LA IMPUTACIÓN----
+
+set.seed(123)
+
+imp_check <- data.frame()
+
+for(i in 1:100){
+   set.seed(i)
+    tmp <- missForest(env_imp_matrix, ntree = 500,maxiter = 10, variablewise = TRUE,
+    verbose = FALSE)$ximp
+  
+  imp_check <- rbind(imp_check,
+    data.frame(seed = i,
+      BQ01_N = tmp[env_imp$ID == "BQ_01","Total N (%)"],
+      BQ02M_N = tmp[env_imp$ID == "BQ_02_M","Total N (%)"],
+      BQ03M_P = tmp[env_imp$ID == "BQ_03_M","Olsen P (mg/kg)"],
+      SG02M_N = tmp[env_imp$ID == "SG_02_M","Total N (%)"]))}
+
+summary(imp_check)
+
+sapply(imp_check[, -1], function(x){
+    c(median = median(x), IQR = IQR(x), min = min(x), max = max(x))})
+
+
+# RDA principal----
+
+env_cc <- env_audit %>% filter(n_observed == 3)
+
+nrow(env_cc)
+
+table(env_cc$Site,env_cc$Date)
+
+ids_cc <- env_cc$ID
+
+otu_rda_cc <- otu_hell[ids_cc,, drop = FALSE]
+
+env_cc <- env_cc[ match(rownames(otu_rda_cc),env_cc$ID),]
+
+stopifnot(identical(rownames(otu_rda_cc), env_cc$ID))
+
+dim(otu_rda_cc)
+
+env_cc_scaled <- env_cc %>%
+  select(`Organic Matter (%)`,`Total N (%)`,`Olsen P (mg/kg)`) %>%
+  scale() %>% as.data.frame()
+
+colnames(env_cc_scaled) <- c("Organic_Matter","Total_N","Olsen_P")
+
+rownames(env_cc_scaled) <- env_cc$ID
+
+library(vegan)
+
+rda_cc <- rda(otu_rda_cc ~ Organic_Matter + Total_N + Olsen_P, data = env_cc_scaled)
+
+rda_cc
+
+# Colinealidad
+vif.cca(rda_cc)
+
+# R2 y R2 ajustado
+RsquareAdj(rda_cc)
+
+# Modelo global
+set.seed(123)
+anova_cc_global <- anova.cca(rda_cc,permutations = 9999)
+anova_cc_global
+
+# Ejes
+set.seed(123)
+anova_cc_axes <- anova.cca(rda_cc,by = "axis",permutations = 9999)
+anova_cc_axes
+
+# Efectos marginales de cada variable
+set.seed(123)
+anova_cc_margin <- anova.cca(rda_cc,by = "margin",permutations = 9999)
+
+anova_cc_margin
+
+cor(env_cc[, c("Organic Matter (%)","Total N (%)","Olsen P (mg/kg)")],
+  use = "complete.obs", method = "spearman")
+
+# RDA DE SENSIBILIDAD - n = 20----
+
+env_imp_rda <- env_imp_final %>%
+  select(ID,Site, Date,
+    `Organic Matter (%)`,
+    `Total N (%)`,
+    `Olsen P (mg/kg)`)
+
+# Check
+nrow(env_imp_rda)
+
+table(env_imp_rda$Site, env_imp_rda$Date)
+ids_imp <- env_imp_rda$ID
+
+otu_rda_imp <- otu_hell[ids_imp,  ,  drop = FALSE]
+
+env_imp_rda <- env_imp_rda[match(rownames(otu_rda_imp),
+    env_imp_rda$ID),]
+
+stopifnot(identical(rownames(otu_rda_imp),env_imp_rda$ID))
+
+dim(otu_rda_imp)
+
+env_imp_scaled <- env_imp_rda %>%
+  select(`Organic Matter (%)`,`Total N (%)`,`Olsen P (mg/kg)`) %>%scale() %>% as.data.frame()
+
+colnames(env_imp_scaled) <- c("Organic_Matter","Total_N","Olsen_P")
+
+rownames(env_imp_scaled) <- env_imp_rda$ID
+rda_imp <- rda(
+  otu_rda_imp ~ Organic_Matter + Total_N + Olsen_P,  data = env_imp_scaled)
+
+rda_imp
+
+# VIF
+vif.cca(rda_imp)
+
+# R2
+RsquareAdj(rda_imp)
+
+# Modelo global
+set.seed(123)
+anova_imp_global <- anova.cca(rda_imp, permutations = 9999)
+anova_imp_global
+
+# Ejes
+set.seed(123)
+anova_imp_axes <- anova.cca(rda_imp,by = "axis",permutations = 9999)
+
+anova_imp_axes
+
+# Variables marginales
+set.seed(123)
+anova_imp_margin <- anova.cca(rda_imp,by = "margin",permutations = 9999)
+
+anova_imp_margin
+
+# Complete cases
+p.adjust(c(Organic_Matter = 0.2566,Total_N = 0.0239, Olsen_P = 0.5079), method = "holm")
+
+# Sensibilidad
+p.adjust( c(Organic_Matter = 0.0812,Total_N = 0.0251, Olsen_P = 0.2647),method = "holm")
+
+
+# PORCENTAJE EXPLICADO - RDA PRINCIPAL----
+
+eig_rda <- rda_cc$CCA$eig
+
+# % de toda la variación comunitaria
+RDA1_total <- round(100 * eig_rda[1] / rda_cc$tot.chi,1)
+
+RDA2_total <- round(100 * eig_rda[2] / rda_cc$tot.chi,1)
+
+# % de la variación restringida
+RDA1_constrained <- round(100 * eig_rda[1] / sum(eig_rda),1)
+
+RDA2_constrained <- round(100 * eig_rda[2] / sum(eig_rda),1)
+
+RDA1_total
+RDA2_total
+
+RDA1_constrained
+RDA2_constrained
+
+# SCORES RDA----
+
+rda_samples <- as.data.frame(
+  scores(rda_cc,display = "sites",choices = 1:2,scaling = 2))
+
+rda_samples$ID <- rownames(rda_samples)
+
+rda_samples <- merge(rda_samples,env_cc[, c("ID", "Site", "Date")],
+                     by = "ID",all.x = TRUE)
+
+rda_samples$Site <- factor(rda_samples$Site,
+  levels = c("Bahia_Buzo","San_Gregorio","Buque_Quemado"))
+
+rda_samples$Date <- factor(rda_samples$Date,
+  levels = c("August", "March"))
+
+rda_arrows <- as.data.frame(
+  scores(rda_cc,display = "bp",choices = 1:2,scaling = 2))
+
+rda_arrows$Variable <- rownames(rda_arrows)
+
+rda_arrows
+
+scores(rda_imp, display = "bp",choices = 1:2, scaling = 2)
+
+# SCORES - RDA PRINCIPAL----
+
+rda_samples <- as.data.frame(
+  scores(rda_cc,display = "sites",choices = 1:2,scaling = 2))
+
+rda_samples$ID <- rownames(rda_samples)
+
+rda_samples <- merge(
+  rda_samples,env_cc[, c("ID", "Site", "Date")],by = "ID",all.x = TRUE)
+
+rda_samples$Site <- factor(
+  rda_samples$Site,
+  levels = c( "Bahia_Buzo", "San_Gregorio", "Buque_Quemado"))
+
+rda_samples$Date <- factor(
+  rda_samples$Date,
+  levels = c("August", "March"))
+
+eig_rda <- rda_cc$CCA$eig
+
+RDA1_total <- round(100 * eig_rda[1] / rda_cc$tot.chi,1)
+
+RDA2_total <- round(100 * eig_rda[2] / rda_cc$tot.chi,1)
+
+RDA1_total
+RDA2_total
+
+# FIGURA FINAL RDA----
+
+library(ggplot2)
+library(ggrepel)
+library(grid)
+
+colores_sitios <- c("Bahia_Buzo"    = "#1b9e77","San_Gregorio"  = "#d95f02","Buque_Quemado" = "#7570b3")
+
+date_shapes <- c( "August" = 16,  "March"  = 17)
+
+Fig_RDA <- ggplot(rda_samples,aes(x = RDA1, y = RDA2)) +
+    # Flechas ambientales
+  geom_segment(
+    data = rda_arrows,
+    aes(x = 0,y = 0,xend = RDA1,yend = RDA2 ),
+    inherit.aes = FALSE,
+    linewidth = 0.9,color = "black",
+    arrow = arrow(length = unit(0.25, "cm"))) +
+  
+  # Etiquetas ambientales
+  geom_text_repel(
+    data = rda_arrows,
+    aes(x = RDA1, y = RDA2, label = Variable    ),
+    inherit.aes = FALSE,
+    size = 6,
+    fontface = "bold",
+    color = "black",
+    box.padding = 0.4,
+    point.padding = 0.2,
+    segment.color = NA  ) +
+  
+  # Muestras
+  geom_point( aes(color = Site, shape = Date),
+    size = 7, alpha = 0.85) +
+    scale_color_manual(
+    values = colores_sitios,
+    labels = c(
+      "Bahia_Buzo"    = "Bahía Buzo",
+      "San_Gregorio"  = "San Gregorio",
+      "Buque_Quemado" = "Buque Quemado")) +
+  
+  scale_shape_manual(values = date_shapes) +
+    guides( color = guide_legend(
+      title = "Site", override.aes = list(size = 6, alpha = 1)),
+    shape = guide_legend(
+      title = "Date",
+      override.aes = list(size = 6, color = "black",alpha = 1))) +
+    labs(
+    x = paste0("RDA1 (", RDA1_total, "%)"),
+    y = paste0("RDA2 (", RDA2_total, "%)")) +
+    theme_bw() +
+    theme(aspect.ratio = 1,
+    axis.text.x = element_text(size = 20),
+    axis.text.y = element_text(size = 20),
+    axis.title.x = element_text(size = 20),
+    axis.title.y = element_text(size = 20),
+    panel.grid.major = element_line(color = "white",linewidth = 0.6),
+    panel.grid.minor = element_blank(),
+    panel.background = element_rect(fill = "gray95",colour = NA),
+    plot.background = element_rect(fill = "white",colour = NA),
+    legend.title = element_text(face = "bold",size = 16),
+    legend.text = element_text(size = 15),
+    legend.position = "bottom")
+
+Fig_RDA
+
+asv_scores <- as.data.frame(
+  scores(rda_cc, display = "species", choices = 1:2,scaling = 2))
+
+asv_scores$ASV <- rownames(asv_scores)
+
+head(asv_scores)
+dim(asv_scores)
+
+# Modelo sin Total N
+rda_OM <- vegan::rda(
+  otu_rda_cc ~ Organic_Matter + Olsen_P,
+  data = env_cc_scaled
+)
+
+# Modelo sin OM
+rda_N <- vegan::rda(
+  otu_rda_cc ~ Total_N + Olsen_P,
+  data = env_cc_scaled
+)
+vegan::RsquareAdj(rda_OM)
+vegan::vif.cca(rda_OM)
+
+set.seed(123)
+anova.cca(
+  rda_OM,
+  permutations = 9999
+)
+
+
+vegan::RsquareAdj(rda_N)
+vegan::vif.cca(rda_N)
+
+set.seed(123)
+anova.cca(
+  rda_N,
+  permutations = 9999
+)
+
+# ASVs PARA LOLLIPOP DE RDA1
+
+library(dplyr)
+library(ggplot2)
+
+# 1. Crear nombre taxonómico representativo
+#    Genus -> Family -> solo ASV si ambos faltan
+
+asv_rda_selected <- asv_rda_selected %>%
+  mutate(
+    
+    Genus_clean = case_when(
+      is.na(Genus) ~ NA_character_,
+      trimws(as.character(Genus)) == "" ~ NA_character_,
+      toupper(trimws(as.character(Genus))) == "NA" ~ NA_character_,
+      TRUE ~ as.character(Genus)
+    ),
+    
+    Family_clean = case_when(
+      is.na(Family) ~ NA_character_,
+      trimws(as.character(Family)) == "" ~ NA_character_,
+      toupper(trimws(as.character(Family))) == "NA" ~ NA_character_,
+      TRUE ~ as.character(Family)
+    ),
+    
+    Taxon = case_when(
+      !is.na(Genus_clean) ~ Genus_clean,
+      !is.na(Family_clean) ~ Family_clean,
+      TRUE ~ NA_character_
+    ),
+    
+    Label = case_when(
+      !is.na(Taxon) ~
+        paste0(gsub("_", " ", ASV), " · ", Taxon),
+      
+      TRUE ~
+        gsub("_", " ", ASV)
+    )
+  )
+
+# 2. Seleccionar ASVs para la figura
+
+# 10 scores positivos más altos
+asv_pos_plot <- asv_rda_selected %>%
+  filter(Direction_RDA1 == "Positive") %>%
+  arrange(desc(RDA1)) %>%
+  slice_head(n = 10)
+
+# Todos los negativos seleccionados
+asv_neg_plot <- asv_rda_selected %>%
+  filter(Direction_RDA1 == "Negative") %>%
+  arrange(RDA1)
+
+# Combinar
+asv_plot <- bind_rows(
+  asv_neg_plot,
+  asv_pos_plot
+)
+
+# Orden visual por score RDA1
+asv_plot <- asv_plot %>%
+  arrange(RDA1) %>%
+  mutate(
+    Label = factor(
+      Label,
+      levels = Label
+    )
+  )
+
+# RECREAR LOLLIPOP
+
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+
+# Comprobar que Label existe
+colnames(asv_plot)
+
+# Si no existe, crear Taxon y Label
+asv_plot <- asv_plot %>%
+  mutate(
+    Genus_clean = case_when(
+      is.na(Genus) ~ NA_character_,
+      trimws(as.character(Genus)) == "" ~ NA_character_,
+      toupper(trimws(as.character(Genus))) == "NA" ~ NA_character_,
+      TRUE ~ as.character(Genus)),
+    Family_clean = case_when(
+      is.na(Family) ~ NA_character_,
+      trimws(as.character(Family)) == "" ~ NA_character_,
+      toupper(trimws(as.character(Family))) == "NA" ~ NA_character_,
+      TRUE ~ as.character(Family)),
+    Taxon = case_when(
+      !is.na(Genus_clean) ~ Genus_clean,
+      !is.na(Family_clean) ~ Family_clean,
+      TRUE ~ NA_character_),
+    Label = case_when(
+      !is.na(Taxon) ~
+        paste0(gsub("_", " ", ASV), " · ", Taxon),
+      TRUE ~  gsub("_", " ", ASV))) %>%
+  arrange(RDA1) %>%
+  mutate(Label = factor(
+      Label,  levels = unique(Label)))
+
+# Colores
+colores_rda <- c( "Negative" = "#2166AC", "Positive" = "#B2182B")
+
+
+# Rehacer figura
+Fig_ASV_RDA <- ggplot(
+  asv_plot,
+  aes(
+    x = RDA1,
+    y = Label,
+    color = Direction_RDA1)) +
+    geom_vline(
+    xintercept = 0,
+    linetype = "dashed",
+    linewidth = 0.5,
+    color = "gray40") +
+  geom_segment(
+    aes(x = 0,  xend = RDA1,
+      y = Label,
+      yend = Label),
+    linewidth = 0.8) +
+  geom_point(size = 4) +
+  scale_color_manual( values = colores_rda) +
+  labs(x = "Species score on RDA1", y = NULL) +
+    theme_bw() +
+    theme(
+    axis.text.y = element_text(size = 18),
+    axis.text.x = element_text(size = 15),
+    axis.title.x = element_text(size = 18),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_rect(
+      fill = "gray97",
+      colour = NA),
+    legend.position = "none")
+
+
+Fig_ASV_RDA
+
+Fig_ASV_RDA <- Fig_ASV_RDA +
+  theme(axis.text.y = element_text(
+      size = 13,                 # etiquetas más grandes
+      hjust = 1,                 # alineadas hacia la izquierda del panel
+      margin = margin(r = 10)),    # separarlas del eje
+    axis.text.x = element_text(size = 11),
+    axis.title.x = element_text(size = 12),
+    plot.margin = margin(t = 5, r = 5,b = 5,
+      l = 25))                 # más espacio para nombres largos
+
+
+rda1 <- Fig_RDA +
+  labs(tag = "A") +
+  theme(
+    plot.tag = element_text(size = 20, face = "plain"),
+    plot.tag.position = c(0.03, 0.95))
+
+rda2 <- Fig_ASV_RDA +
+  labs(tag = "B") +
+  theme(plot.tag = element_text(size = 20, face = "plain"),
+    plot.tag.position = c(0.01, 0.95)  )
+
+RDA <- patchwork::wrap_plots(
+  rda1, rda2, nrow = 1, widths = c(1, 1.15))
+
+RDA
+ggsave(
+  filename = "RDA.svg",
+  plot = RDA, #nombre del plot
+  device = "svg", #Formato vectorial para inkscape
+  width = 17, height =11, units = "in")
+
+# Heatmap familia ----
+# HEATMAP DESCRIPTIVO - FAMILIAS BACTERIANAS
+
+library(phyloseq)
+library(dplyr)
+library(ggplot2)
+library(scales)
+
+# 1. OBJETO DE SEDIMENTOS
+
+# Partimos del objeto NO rarefaccionado
+obj_sedimentos <- subset_samples(
+  Sed_16S,Type == "Sediment")
+
+obj_sedimentos <- prune_taxa(
+  taxa_sums(obj_sedimentos) > 0,
+  obj_sedimentos)
+
+# 2. ABUNDANCIA RELATIVA
+
+obj_rel <- transform_sample_counts(
+  obj_sedimentos,
+  function(x) x / sum(x))
+
+# Aglomerar a nivel de familia
+obj_family <- tax_glom(obj_rel,taxrank = "Family")
+
+# Pasar a dataframe
+df_family <- psmelt(obj_family)
+
+# 3. ELIMINAR TAXONOMÍA NO INFORMATIVA
+
+df_family <- df_family %>%
+  filter(
+    !is.na(Family),
+    Family != "",
+    Family != "Unknown Family",
+    Family != "NA")
+
+# 4. SELECCIONAR LAS 18 FAMILIAS MÁS ABUNDANTES
+
+top_families <- df_family %>%
+  group_by(Family) %>%
+  summarise(
+    Mean_RA = mean(Abundance),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(Mean_RA)) %>%
+  slice_head(n = 18) %>%
+  pull(Family)
+
+top_families
+
+# 6. ORDEN DE FAMILIAS Y GRUPOS
+
+family_order <- heat_df %>%
+  group_by(Family) %>%
+  summarise(Mean_abundance = mean(Abundance),
+            .groups = "drop") %>%
+  arrange(Mean_abundance) %>%  pull(Family)
+
+heat_df$Family <- factor(heat_df$Family,levels = family_order)
+
+heat_df$Date <- factor(heat_df$Date,levels = c(
+  "March","August"))
+
+heat_df$Site <- factor(
+  heat_df$Site,
+  levels = c("Bahia_Buzo","San_Gregorio", "Buque_Quemado"))
+
+# 7. HEATMAP FINAL
+
+fam <- ggplot(
+  heat_df, aes(
+    x = Date,
+    y = Family,
+    fill = Abundance)) +
+  geom_tile(color = "white",linewidth = 0.4) +
+  geom_text(
+    aes(label = sprintf("%.1f", Abundance)),
+    size = 6) +
+  facet_wrap( ~ Site, nrow = 1) +
+  scale_fill_gradientn(
+    colours = c("#faf6f0","#edd2b7","#d88a66","#9e1f1f" ),
+    values = scales::rescale(c(0, 0.5, 2, 8, 25)),
+    na.value = "white",
+    name = "% Read\nabundance") +
+  scale_x_discrete(labels = c( "March","August")) +
+  labs( x = NULL, y = NULL) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1,size = 18),
+    # Familias NO deben ir en cursiva
+    axis.text.y = element_text(size = 18,face = "plain"),
+    strip.text = element_text(size = 18,face = "plain"),
+    panel.grid = element_blank(),
+    panel.spacing = unit(1.3,"lines"),
+    legend.title = element_text(size = 11),
+    legend.text = element_text(size = 18)  )
+
+
+fam
+
+ggsave(
+  filename = "fam.pdf",
+  plot = fam, #nombre del plot
+  device = "pdf", #Formato vectorial para inkscape
+  width = 17, height =11, units = "in")
+
+
+# CORE Microbiota-----
+
+library(phyloseq)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Solo sedimentos
+sed_core <- subset_samples(Sed_16S, Type == "Sediment")
+
+# Eliminar ASVs con suma 0 después del subset
+sed_core <- prune_taxa( taxa_sums(sed_core) > 0,
+  sed_core)
+
+sed_core
+
+table(sample_data(sed_core)$Date)
+table(sample_data(sed_core)$Site)
+# Transformar a abundancia relativa
+sed_core_rel <- transform_sample_counts(
+  sed_core, function(x) x / sum(x))
+
+# Extraer matriz de abundancia relativa
+core_mat <- as(otu_table(sed_core_rel), "matrix")
+
+if (taxa_are_rows(sed_core_rel)) {core_mat <- t(core_mat)}
+
+# Deberiamos ver # filas= muestras, # columnas = ASVs
+
+dim(core_mat)
+
+core_meta <- data.frame(sample_data(sed_core_rel))
+
+core_meta$SampleID <- rownames(core_meta)
+
+# Asegurar mismo orden
+core_meta <- core_meta[rownames(core_mat), ]
+
+identical(rownames(core_mat), core_meta$SampleID)
+
+get_core <- function(
+    otu_matrix,
+    metadata,
+    variable,
+    group,
+    detection = 0.001,
+    prevalence = 0.90) {
+    # Seleccionar muestras del grupo
+  ids <- metadata$SampleID[
+    metadata[[variable]] == group  ]
+    x <- otu_matrix[ids, , drop = FALSE]
+    # Nº de muestras
+  n_samples <- nrow(x)
+    # Nº de muestras donde cada ASV alcanza >= detection
+  n_detected <- colSums(
+    x >= detection)
+    # Prevalencia
+  prev <- n_detected / n_samples
+    # ASVs core
+  core_asvs <- names(prev)[
+    prev >= prevalence]
+    data.frame(
+    ASV = names(prev),
+    n_samples = n_samples,
+    n_detected = n_detected,
+    prevalence = prev,
+    core = names(prev) %in% core_asvs,
+    stringsAsFactors = FALSE)}
+# CORE fecha----
+core_aug_90 <- get_core(
+  core_mat, core_meta,
+  variable = "Date",  group = "August",
+  detection = 0.001, prevalence = 0.90)
+
+core_mar_90 <- get_core(
+  core_mat, core_meta,
+  variable = "Date",group = "March",
+  detection = 0.001,  prevalence = 0.90)
+# Numero de ASVs
+sum(core_aug_90$core)
+sum(core_mar_90$core)
+# ASVs
+asv_aug_90 <- core_aug_90$ASV[core_aug_90$core]
+
+asv_mar_90 <- core_mar_90$ASV[core_mar_90$core]
+
+asv_aug_90
+asv_mar_90
+
+# CORE sitios----
+
+core_bb_90 <- get_core( core_mat, core_meta,
+  variable = "Site",group = "Bahia_Buzo",
+  detection = 0.001,prevalence = 0.90)
+
+core_sg_90 <- get_core( core_mat,  core_meta,
+  variable = "Site", group = "San_Gregorio",
+  detection = 0.001,  prevalence = 0.90)
+
+core_bq_90 <- get_core( core_mat, core_meta,
+  variable = "Site",group = "Buque_Quemado",
+  detection = 0.001,prevalence = 0.90)
+# Numero de ASVs
+sum(core_bb_90$core)
+sum(core_sg_90$core)
+sum(core_bq_90$core)
+# ASVs
+asv_bb_90 <- core_bb_90$ASV[core_bb_90$core]
+asv_sg_90 <- core_sg_90$ASV[core_sg_90$core]
+asv_bq_90 <- core_bq_90$ASV[core_bq_90$core]
+
+asv_bb_90
+asv_sg_90
+asv_bq_90
+
+core_sensitivity <- function(
+    variable,
+    group,
+    prevalence_values = c(0.80, 0.90, 1.00),
+    detection = 0.001) {
+  
+  bind_rows(
+    lapply(
+      prevalence_values,
+      function(p) {
+        
+        res <- get_core(
+          otu_matrix = core_mat,
+          metadata = core_meta,
+          variable = variable,
+          group = group,
+          detection = detection,
+          prevalence = p)
+        
+        data.frame(
+          Variable = variable,
+          Group = group,
+          Detection = detection,
+          Prevalence_threshold = p,
+          n_samples = unique(res$n_samples),
+          min_samples_required =
+            ceiling(p * unique(res$n_samples)),
+          n_core = sum(res$core))}))}
+
+core_sensitivity_table <- bind_rows(
+  core_sensitivity("Date", "August"),
+  core_sensitivity("Date", "March"),
+  
+  core_sensitivity("Site", "Bahia_Buzo"),
+  core_sensitivity("Site", "San_Gregorio"),
+  core_sensitivity("Site", "Buque_Quemado"))
+
+core_sensitivity_table
+
+get_core_asvs <- function(
+    variable,
+    group,
+    prevalence,
+    detection = 0.001) {
+    res <- get_core(
+    otu_matrix = core_mat,
+    metadata = core_meta,
+    variable = variable,
+    group = group,
+    detection = detection,
+    prevalence = prevalence)
+    res$ASV[res$core]}
+
+bb_80 <- get_core_asvs("Site", "Bahia_Buzo", 0.80)
+bb_90 <- get_core_asvs("Site", "Bahia_Buzo", 0.90)
+bb_100 <- get_core_asvs("Site", "Bahia_Buzo",  1.00)
+
+sg_80 <- get_core_asvs("Site", "San_Gregorio", 0.80)
+sg_90 <- get_core_asvs("Site", "San_Gregorio", 0.90)
+sg_100 <- get_core_asvs("Site", "San_Gregorio", 1.00)
+
+bq_80 <- get_core_asvs("Site", "Buque_Quemado", 0.80)
+bq_90 <- get_core_asvs("Site", "Buque_Quemado", 0.90)
+bq_100 <- get_core_asvs("Site", "Buque_Quemado", 1.00)
+
+c(
+  BB_80 = length(bb_80),
+  BB_90 = length(bb_90),
+  BB_100 = length(bb_100),
+  
+  SG_80 = length(sg_80),
+  SG_90 = length(sg_90),
+  SG_100 = length(sg_100),
+  
+  BQ_80 = length(bq_80),
+  BQ_90 = length(bq_90),
+  BQ_100 = length(bq_100))
+
+aug_80 <- get_core_asvs("Date", "August", 0.80)
+aug_90 <- get_core_asvs("Date", "August", 0.90)
+aug_100 <- get_core_asvs("Date", "August", 1.00)
+
+mar_80 <- get_core_asvs("Date", "March", 0.80)
+mar_90 <- get_core_asvs("Date", "March", 0.90)
+mar_100 <- get_core_asvs("Date", "March", 1.00)
+
+c(
+  August_80 = length(aug_80),
+  August_90 = length(aug_90),
+  August_100 = length(aug_100),
+  
+  March_80 = length(mar_80),
+  March_90 = length(mar_90),
+  March_100 = length(mar_100))
+
+# CORE compartido entre sitios----
+
+shared_sites_90 <- Reduce(
+  intersect, list(bb_90, sg_90, bq_90))
+
+shared_sites_100 <- Reduce(
+  intersect, list(bb_100, sg_100, bq_100))
+
+shared_sites_90
+length(shared_sites_90)
+
+shared_sites_100
+length(shared_sites_100)
+
+# CORE compartido entre fechas----
+
+shared_dates_90 <- intersect(aug_90, mar_90)
+
+shared_dates_100 <- intersect(aug_100, mar_100)
+
+shared_dates_90
+length(shared_dates_90)
+
+shared_dates_100
+length(shared_dates_100)
+
+# ASVs CORE EN TODAS LAS PARTICIONES
+
+universal_core_90 <- Reduce(
+  intersect,
+  list( aug_90, mar_90,
+    bb_90, sg_90, bq_90))
+
+universal_core_100 <- Reduce(
+  intersect,
+  list(aug_100,mar_100,
+    bb_100, sg_100, bq_100))
+
+universal_core_90
+length(universal_core_90)
+
+universal_core_100
+length(universal_core_100)
+
+global_core_90 <- colnames(core_mat)[
+  colSums(core_mat >= 0.001) / nrow(core_mat) >= 0.90
+]
+
+global_core_100 <- colnames(core_mat)[
+  colSums(core_mat >= 0.001) / nrow(core_mat) >= 1
+]
+
+global_core_90
+length(global_core_90)
+
+global_core_100
+length(global_core_100)
+
+# CORE GLOBAL: SENSIBILIDAD 80, 90 y 100%
+
+global_sensitivity <- data.frame(
+  Group = "All samples",
+  Prevalence_threshold = c(0.80, 0.90, 1.00))
+
+global_sensitivity$n_samples <- nrow(core_mat)
+global_sensitivity$min_samples_required <- ceiling(
+  global_sensitivity$Prevalence_threshold *
+    global_sensitivity$n_samples)
+global_sensitivity$n_core <- sapply(
+  global_sensitivity$Prevalence_threshold,
+  function(p) {
+      prevalence_asv <- colSums(core_mat >= 0.001) /
+      nrow(core_mat)
+      sum(prevalence_asv >= p)})
+
+global_sensitivity
+
+# PANEL A: CORE POR SITIO
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+
+core_site_plot <- core_sensitivity_table %>%
+  filter(Variable == "Site") %>%
+  mutate(
+    Group = factor(Group,
+      levels = c("Bahia_Buzo", "San_Gregorio", "Buque_Quemado")),
+    Prevalence_percent = Prevalence_threshold * 100 )
+
+colores_sitios <- c(
+  "Bahia_Buzo" = "#1b9e77",
+  "San_Gregorio" = "#d95f02",
+  "Buque_Quemado" = "#7570b3")
+
+Core_site <- ggplot(
+  core_site_plot,
+  aes(x = Prevalence_percent, y = n_core,
+    color = Group, group = Group)) +
+  geom_line(linewidth = 1.3) +
+  geom_point(size = 6) +
+  geom_text(aes(label = n_core),
+    vjust = -0.9, size = 5.5, show.legend = FALSE) +
+  scale_color_manual(
+    values = colores_sitios,
+    labels = c(
+      "Bahía Buzo", "San Gregorio", "Buque Quemado"),
+    name = "Site") +
+  scale_x_continuous(
+    breaks = c(80, 90, 100),
+    labels = c("80", "90", "100"),
+    limits = c(78, 102)) +
+  scale_y_continuous(expand = expansion(mult = c(0.02, 0.10))) +
+  labs(
+    x = "Prevalence threshold (%)", y = "Number of core ASVs") +
+  theme_bw() +
+  theme(
+    axis.text = element_text(size = 18),
+    axis.title = element_text(size = 18),
+    legend.title = element_text(size = 18, face = "bold"),
+    legend.text = element_text(size = 18),
+    panel.grid.minor = element_blank(),
+    panel.background = element_rect(
+    fill = "gray97", colour = NA),
+    legend.position = "top")
+Core_site
+
+# Date + global
+core_date_plot <- core_sensitivity_table %>%
+  filter(Variable == "Date") %>%
+  transmute(Group,
+    Prevalence_threshold,
+    n_samples, min_samples_required, n_core)
+core_date_global <- bind_rows(
+  core_date_plot, global_sensitivity) %>%
+  mutate(
+    Group = factor(Group,
+      levels = c("August", "March","All samples")),
+      Prevalence_percent = Prevalence_threshold * 100)
+
+colores_core_temporal <- c(
+  "August" = "#7EC0EE",
+  "March" = "#9ACD32",
+  "All samples" = "black")
+tipos_linea <- c(
+  "August" = "solid",
+  "March" = "solid",
+  "All samples" = "dashed")
+
+Core_date <- ggplot(
+  core_date_global,
+  aes(x = Prevalence_percent, y = n_core, color = Group,
+    linetype = Group,
+    group = Group)) +
+  geom_line(linewidth = 1.3) +
+  geom_point(size = 6) +
+  geom_text(
+    aes(label = n_core),
+    vjust = -0.9, size = 6.5, show.legend = FALSE ) +
+  scale_color_manual(
+    values = colores_core_temporal,
+    name = NULL) +
+  scale_linetype_manual(
+    values = tipos_linea,
+    name = NULL) +
+  scale_x_continuous(
+    breaks = c(80, 90, 100),
+    labels = c("80", "90", "100"),
+    limits = c(78, 102)) +
+  scale_y_continuous(
+    expand = expansion(mult = c(0.02, 0.13))) +
+    labs(
+    x = "Prevalence threshold (%)",
+    y = "Number of core ASVs") +
+  theme_bw() +
+  theme(
+    axis.text = element_text(size = 18),
+    axis.title = element_text(size = 18),
+    legend.text = element_text(size = 18),
+    panel.grid.minor = element_blank(),
+    panel.background = element_rect(
+      fill = "gray97", colour = NA),
+    legend.position = "top")
+
+Core_date
+
+Core_A <- Core_site +
+  labs(tag = "A") +
+  theme(
+    plot.tag = element_text(size = 20, face = "plain"),
+    plot.tag.position = c(0.02, 0.98))
+
+Core_B <- Core_date + labs(tag = "B") +
+  theme(
+    plot.tag = element_text(size = 20, face = "plain"),
+    plot.tag.position = c(0.02, 0.98))
+
+Fig_Core <- patchwork::wrap_plots(
+  Core_A, Core_B, nrow = 1, widths = c(1, 1))
+
+Fig_Core
+
+ggsave(
+  filename = "Core.pdf",
+  plot = Fig_Core, #nombre del plot
+  device = "pdf", #Formato vectorial para inkscape
+  width = 17, height =11, units = "in")
+
+# TABLA TAXONÓMICA PARA EL CORE
+
+tax_core <- as.data.frame(
+  tax_table(sed_core))
+
+tax_core$ASV <- rownames(tax_core)
+
+tax_core <- tax_core %>%
+  select(
+    ASV,
+    Phylum,
+    Class,
+    Order,
+    Family,
+    Genus  )
+
+head(tax_core)
+dim(tax_core)
+
+core_aug_table <- make_core_table(
+  variable = "Date", group = "August", prevalence = 0.90)
+
+core_aug_table
+
+nrow(core_aug_table)
+
+# CORE POR FECHA
+
+core_aug_table <- make_core_table(
+  "Date", "August", prevalence = 0.90)
+
+core_mar_table <- make_core_table(
+  "Date", "March", prevalence = 0.90)
+
+Table_S5A <- bind_rows(
+  core_aug_table, core_mar_table)
+
+table(Table_S5A$Group)
+
+# CORE POR SITIO
+
+core_bb_table <- make_core_table(
+  "Site", "Bahia_Buzo", prevalence = 0.90)
+
+core_sg_table <- make_core_table(
+  "Site", "San_Gregorio", prevalence = 0.90)
+
+core_bq_table <- make_core_table(
+  "Site", "Buque_Quemado", prevalence = 0.90)
+
+Table_S5B <- bind_rows(
+  core_bb_table, core_sg_table, core_bq_table)
+
+table(Table_S5B$Group)
+
+exists("sed_core")
+exists("core_mat")
+exists("core_meta")
+exists("tax_core")
+
+# TABLE S5C — REGIONAL CORE
+
+regional_n_detected <- colSums(
+  core_mat >= 0.001)
+
+regional_prevalence <- regional_n_detected /
+  nrow(core_mat)
+
+regional_mean_ra <- colMeans(core_mat) * 100
+Table_S5C <- data.frame(ASV = global_core_90,
+  n_samples = nrow(core_mat),
+  n_detected = regional_n_detected[global_core_90],
+  Prevalence = regional_prevalence[global_core_90],
+  Mean_RA_percent =
+    regional_mean_ra[global_core_90],
+  Core_100_percent = global_core_90 %in% global_core_100,
+  row.names = NULL) %>%
+    left_join(tax_core, by = "ASV"  ) %>%
+  arrange(desc(Prevalence), desc(Mean_RA_percent))
+
+Table_S5C
+
+# TABLE S5D — CORE SENSITIVITY
+
+# Primero asegurarnos de que Global esté armado correctamente
+global_sensitivity <- data.frame(
+  Variable = "Regional",
+  Group = "All samples",
+  Detection = 0.001,
+  Prevalence_threshold = c(0.80, 0.90, 1.00),
+  n_samples = nrow(core_mat))
+
+global_sensitivity$min_samples_required <- ceiling(
+  global_sensitivity$Prevalence_threshold *
+    global_sensitivity$n_samples)
+
+global_sensitivity$n_core <- sapply(
+  global_sensitivity$Prevalence_threshold,
+  function(p) {
+    prevalence_asv <- colSums(core_mat >= 0.001) / nrow(core_mat)
+    sum(prevalence_asv >= p)})
+
+Table_S5D <- bind_rows(core_sensitivity_table %>%
+    transmute(
+      Variable,
+      Group,
+      Detection,
+      Prevalence_threshold,
+      n_samples,
+      min_samples_required,
+      n_core),
+  global_sensitivity) %>%
+  mutate( Detection_percent = Detection * 100,
+    Prevalence_percent = Prevalence_threshold * 100) %>%
+  select(
+    Variable,
+    Group,
+    Detection_percent,
+    Prevalence_percent,
+    n_samples,
+    min_samples_required,
+    n_core)
+
+Table_S5D
+
+# FORMATO FINAL
+
+Table_S5A_export <- Table_S5A %>%
+  mutate(
+    Prevalence_percent = Prevalence * 100) %>%
+  select(
+    Group,
+    ASV,
+    n_samples,
+    n_detected,
+    Prevalence_percent,
+    Mean_RA_percent,
+    Phylum,
+    Class,
+    Order,
+    Family,
+    Genus)
+
+Table_S5B_export <- Table_S5B %>%
+  mutate(
+    Prevalence_percent = Prevalence * 100) %>%
+  select(
+    Group,
+    ASV,
+    n_samples,
+    n_detected,
+    Prevalence_percent,
+    Mean_RA_percent,
+    Phylum,
+    Class,
+    Order,
+    Family,
+    Genus)
+
+Table_S5C_export <- Table_S5C %>%
+  mutate(
+    Prevalence_percent = Prevalence * 100) %>% 
+  select(
+    ASV,
+    n_samples,
+    n_detected,
+    Prevalence_percent,
+    Mean_RA_percent,
+    Core_100_percent,
+    Phylum,
+    Class,
+    Order,
+    Family,
+    Genus)
+
+# TABLAS TAXONÓMICAS DEL CORE
+# criterio principal:
+# detection >= 0.1%
+# prevalence >= 90%
+
+library(dplyr)
+
+clean_core_table <- function(x) {
+    x %>%
+    select(
+      ASV,
+      Phylum,
+      Class,
+      Order,
+      Family,
+      Genus) %>%
+    # Ordenar por número de ASV
+    mutate(
+      ASV_number = as.numeric(gsub("ASV_", "", ASV))) %>%
+    arrange(ASV_number) %>%
+    select(-ASV_number)}
+
+# Table S5A - August
+Table_S5A <- clean_core_table(core_aug_table)
+
+# Table S5B - March
+Table_S5B <- clean_core_table(core_mar_table)
+
+# Table S5C - Bahia Buzo
+Table_S5C <- clean_core_table(core_bb_table)
+
+# Table S5D - San Gregorio
+Table_S5D <- clean_core_table(core_sg_table)
+
+# Table S5E - Buque Quemado
+Table_S5E <- clean_core_table(core_bq_table)
+
+dim(Table_S5A)
+dim(Table_S5B)
+dim(Table_S5C)
+dim(Table_S5D)
+dim(Table_S5E)
+
+Table_S5F <- tax_core %>%
+  filter(ASV %in% global_core_90) %>%
+    mutate(
+    ASV_number = as.numeric(gsub("ASV_", "", ASV))) %>%
+    arrange(ASV_number) %>%
+    select(
+    ASV,
+    Phylum,
+    Class,
+    Order,
+    Family,
+    Genus)
+
+Table_S5F
+Table_S5G <- Table_S5D_Sensitivity <- bind_rows(
+  
+  core_sensitivity_table %>%
+    transmute(
+      Scale = Variable,
+      Group,
+      Detection_threshold = Detection * 100,
+      Prevalence_threshold = Prevalence_threshold * 100,
+      n_samples,
+      min_samples_required,
+      n_core),
+    global_sensitivity %>%
+    transmute(
+      Scale = Variable,
+      Group,
+      Detection_threshold = Detection * 100,
+      Prevalence_threshold = Prevalence_threshold * 100,
+      n_samples,
+      min_samples_required,
+      n_core))
+
+Table_S5G
+
+library(writexl)
+
+write_xlsx(
+  list(
+    "S5A_August" = Table_S5A,
+    "S5B_March" = Table_S5B,
+    "S5C_Bahia_Buzo" = Table_S5C,
+    "S5D_San_Gregorio" = Table_S5D,
+    "S5E_Buque_Quemado" = Table_S5E,
+    "S5F_Regional_Core" = Table_S5F,
+    "S5G_Sensitivity" = Table_S5G),
+  "Supplementary_Core_Tables.xlsx")
+
+
+# Figuras-----
+#Filo----
+library(dplyr)
+library(ggplot2)
+library(ggalluvial)
+Sediments <- subset_samples(Sed_16S, Type == "Sediment")
+Water <- subset_samples(Sed_16S, Type == "Sea_Water")
+
+phylumabundance <- Sediments %>%
+  tax_glom(taxrank = "Phylum")%>%                     # agglomerate at genus level
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance
+  psmelt() %>%                                         # Melt to long format
+  arrange(Phylum) 
+head(phylumabundance)
+
+
+all_no_other <- phylumabundance %>%
+  filter(Type != "Sea_Water") %>%
+  select(Phylum, Type, Date, Abundance) %>%
+  group_by(Phylum, Type, Date) %>%
+  summarize(avg_abundance = mean(Abundance), .groups = "drop") %>%
+  # Filtrar filos >= 5%
+  filter(avg_abundance >= 0.05) %>%
+  # Renormalizar para que sumen 1 dentro de Type × Date
+  group_by(Type, Date) %>%
+  mutate(avg_abundance = avg_abundance / sum(avg_abundance)) %>%
+  ungroup()
+
+colors=c(Actinomycetota="#E7EBFA", Acidobacteriota= "#FFFFF0", Chloroflexota="#AB82FF",Cyanobacteriota ="#E0FFFF", 
+         Bacteroidota="#BA55D3",Thermodesulfobacteriota="#698B22", Bacillota = "#CD8C95",Pseudomonadota= "#B8860B",
+         Planctomycetota="#8FBC8F",	Verrucomicrobiota="#F0E68C")
+
+# Colores solo para los filos que quedan
+colors_no_other <- colors[names(colors) != "Other"]
+
+# Definir un tema común
+my_theme <- theme(
+  axis.text.y.left = element_text(size = 14),
+  axis.title.y = element_text(size = 16),
+  axis.text.x = element_blank(),
+  title = element_text(size = 16),
+  legend.text = element_text(size = 16),
+  strip.text.x = element_text(size = 15)
+)
+
+# Plot ggalluvial sin Others
+p_no_other <- ggplot(all_no_other,
+                     aes(x = factor(Date, levels = c("August", "March")),
+                         y = avg_abundance,
+                         alluvium = Phylum,
+                         stratum = Phylum,
+                         fill = Phylum)) +
+  geom_flow(alpha = 0.35, width = 0.5, color = "black") +
+  geom_stratum(color = "black", width = 0.5) +
+  facet_grid(. ~ Type) +
+  ylab("Relative abundance (%)") +
+  xlab("") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = colors_no_other, drop = FALSE) +
+  my_theme +
+  labs(tag = "A") +
+  theme(plot.tag = element_text(size = 20, face = "bold"),
+        plot.tag.position = c(0.03, 0.98),
+        legend.position = "none")
+
+# Por sitio, excluyendo Sea_Water
+all_sitio_no_other <- phylumabundance %>%
+  filter(Type != "Sea_Water") %>%
+  group_by(Phylum, Site, Date) %>%
+  summarize(avg_abundance = mean(Abundance), .groups = "drop") %>%
+  filter(avg_abundance >= 0.05) %>%               # solo filos importantes
+  group_by(Site, Date) %>%
+  mutate(avg_abundance = avg_abundance / sum(avg_abundance)) %>%
+  ungroup()
+
+p6_no_other <- ggplot(all_sitio_no_other,
+                      aes(x = factor(Date, levels = c("August", "March")),
+                          y = avg_abundance,
+                          alluvium = Phylum,
+                          stratum = Phylum,
+                          fill = Phylum)) +
+  geom_flow(alpha = 0.35, width = 0.5, color = "black") +
+  geom_stratum(color = "black", width = 0.5) +
+  facet_grid(. ~ factor(Site, levels = c("Bahia_Buzo", "San_Gregorio", "Buque_Quemado"))) + 
+  ylab("") +
+  xlab("") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = colors[names(colors) != "Other"], drop = FALSE) +
+  my_theme +
+  labs(tag = "B") +
+  theme(plot.tag = element_text(size = 20, face = "bold"),
+        plot.tag.position = c(0.03, 0.98))
+
+my_theme <- theme(
+  axis.text.y.left = element_text(size = 14),
+  axis.title.y = element_text(size = 16),
+  axis.text.x = element_text(size = 18, vjust = 1, hjust = 1, angle = 45),
+  title = element_text(size = 16),
+  legend.text = element_text(size = 16),
+  strip.text.x = element_text(size = 15))
+
+# Agua, excluyendo Sediment
+phylumabundance <- Water %>%
+  tax_glom(taxrank = "Phylum")%>%                     # agglomerate at genus level
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance
+  psmelt() %>%                                         # Melt to long format
+  arrange(Phylum) 
+head(phylumabundance)
+
+all_water_no_other <- phylumabundance %>%
+  #filter( Type != "Sediment") %>%
+  select(Phylum, Type, Date, Abundance) %>%
+  group_by(Phylum, Type, Date) %>%
+  summarize(avg_abundance = mean(Abundance), .groups = "drop") %>%
+  filter(avg_abundance >= 0.05)
+
+all_water_no_other <- all_water_no_other %>%
+  group_by(Type, Date) %>%
+  mutate(avg_abundance = avg_abundance / sum(avg_abundance)) %>%
+  ungroup()
+
+
+colors=c(Bacteroidota="#BA55D3",Cyanobacteriota ="#E0FFFF", 
+         Pseudomonadota= "#B8860B",Verrucomicrobiota="#F0E68C")
+colors_w <- colors[names(colors) != "Other"]
+
+w5_no_other <- ggplot(all_water_no_other,
+                      aes(x = factor(Date, levels = c("August", "March")),
+                          y = avg_abundance,
+                          alluvium = Phylum,
+                          stratum = Phylum,
+                          fill = Phylum)) +
+  geom_flow(alpha = 0.35, width = 0.5, color = "black") +
+  geom_stratum(color = "black", width = 0.5) +
+  facet_grid(. ~ Type) +
+  ylab("Relative abundance (%)") +
+  xlab("") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = colors_w[names(colors_w) != "Other"], drop = FALSE) +
+  my_theme +
+  labs(tag = "C") +
+  theme(plot.tag = element_text(size = 20, face = "bold"),
+        plot.tag.position = c(0.03, 0.98),
+        legend.position = "none")
+
+# Agua por sitio, excluyendo Sediment
+all_sitio_water_no_other <- phylumabundance %>%
+  filter(Type != "Sediment") %>%
+  group_by(Phylum, Site, Date) %>%
+  summarize(avg_abundance = mean(Abundance), .groups = "drop") %>%
+  filter(avg_abundance >= 0.05) %>%
+  group_by(Site, Date) %>%
+  mutate(avg_abundance = avg_abundance / sum(avg_abundance)) %>%
+  ungroup()
+
+w6_no_other <- ggplot(all_sitio_water_no_other,
+                      aes(x = factor(Date, levels = c("August", "March")),
+                          y = avg_abundance,
+                          alluvium = Phylum,
+                          stratum = Phylum,
+                          fill = Phylum)) +
+  geom_flow(alpha = 0.35, width = 0.5, color = "black") +
+  geom_stratum(color = "black", width = 0.5) +
+  facet_grid(. ~ factor(Site, levels = c("Bahia_Buzo", "San_Gregorio", "Buque_Quemado"))) + 
+  ylab("") +
+  xlab("") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = colors_w[names(colors_w) != "Other"], drop = FALSE) +
+  my_theme +
+  labs(tag = "D") +
+  theme(plot.tag = element_text(size = 20, face = "bold"),
+        plot.tag.position = c(0.03, 0.98))
+
+# Combinar plots
+WSP_no_other <- (p_no_other | p6_no_other) / (w5_no_other | w6_no_other)
+WSP_no_other
