@@ -106,8 +106,8 @@ nochim <- rowSums(seqtab)
 write.table(nochim, "nochim_filter.txt")
 
 message("Assign taxonomy with Silva")
-taxa.silva <- assignTaxonomy(seqtab, file.path("silva_nr99_v138.1_train_set.fa.gz"), minBoot = 80, multithread=TRUE, verbose=TRUE)
-species.silva <- addSpecies(taxa.silva, file.path("silva_species_assignment_v138.1.fa.gz"), verbose=TRUE) # Assign species
+taxa.silva <- assignTaxonomy(seqtab, file.path("silva_nr99_v138.2_train_set.fa.gz"), minBoot = 80, multithread=TRUE, verbose=TRUE)
+species.silva <- addSpecies(taxa.silva, file.path("silva_species_assignment_v138.2.fa.gz"), verbose=TRUE) # Assign species
 saveRDS(taxa.silva, file.path("taxa.silva.rds"))
 saveRDS(species.silva, file.path("species.silva.rds"))
 
