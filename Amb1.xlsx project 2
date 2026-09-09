@@ -1,0 +1,26 @@
+ID	Site	Type	Date	Organic Matter (%)	Total N (%)	Olsen P (mg/kg)
+BB_01	Bahia_Buzo	Sediment	August	1,58	0,16	47,5
+BB_02	Bahia_Buzo	Sediment	August	2,96	0,17	41,7
+BB_03	Bahia_Buzo	Sediment	August	2,1	0,19	43
+BB_04	Bahia_Buzo	Sediment	August	2,47	0,14	42,1
+BB_05	Bahia_Buzo	Sediment	August	2,68	0,13	68,6
+SG_01	San_Gregorio	Sediment	August	NA	NA	NA
+SG_02	San_Gregorio	Sediment	August	NA	NA	NA
+BQ_01	Buque_Quemado	Sediment	August	2,94	NA	25
+BQ_02	Buque_Quemado	Sediment	August	2,56	0,25	39,4
+BQ_03	Buque_Quemado	Sediment	August	1,91	0,25	56,5
+BQ_04	Buque_Quemado	Sediment	August	3,39	0,27	32,5
+BQ_05	Buque_Quemado	Sediment	August	3,31	0,26	28,3
+BB_01_M	Bahia_Buzo	Sediment	March	0,03	0,02	3,7
+BB_02_M	Bahia_Buzo	Sediment	March	NA	NA	NA
+BB_03_M	Bahia_Buzo	Sediment	March	1,83	NA	NA
+SG_01_M	San_Gregorio	Sediment	March	0,13	0,06	17,2
+SG_02_M	San_Gregorio	Sediment	March	0,11	NA	15,4
+SG_03_M	San_Gregorio	Sediment	March	0,06	0,04	16,3
+SG_04_M	San_Gregorio	Sediment	March	NA	NA	15
+SG_05_M	San_Gregorio	Sediment	March	0,02	0,04	10,8
+BQ_01_M	Buque_Quemado	Sediment	March	3,7	0,31	47,4
+BQ_02_M	Buque_Quemado	Sediment	March	2,3	NA	42,7
+BQ_03_M	Buque_Quemado	Sediment	March	3,5	0,32	NA
+BQ_04_M	Buque_Quemado	Sediment	March	2,7	0,16	57,4
+BQ_05_M	Buque_Quemado	Sediment	March	3,8	0,34	80,4
