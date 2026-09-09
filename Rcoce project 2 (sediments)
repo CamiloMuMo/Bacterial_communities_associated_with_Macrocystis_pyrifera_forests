@@ -6,40 +6,35 @@ library(seqinr)
 library(dplyr)
 library(phyloseq)
 
-#eliminar las sequencia (columna A), taxonomia y transformar el archivo a .xlsx. Cambiar asv->OTU_ID
+#Read file to work
 taxa.silva <- read_excel("taxa.silva.xlsx")
-#Limpiar los datos usando el método 'decon' (elimina contaminantes o ruidos)
+#Clean data
 clean.16S <- decon(data = as.data.frame(taxa.silva),numb.blanks=3,numb.ind=31,taxa=F)
-#Extrae la tabla limpia del resultado de 'decon'
 clean.16S<-clean.16S$decon.table
-# Eliminar la segunda columna 
 clean.16S<-clean.16S[,-2]
 dim(clean.16S)
 
-#Extraer la etiqueta (OTU_ID)
+#Data Preparation for Analysis
 namesTax <-c("OTU_ID")
 Tax <- clean.16S[,namesTax]
-#Transponer tabla para que las muestras estén en filas y los ASVs en columnas
 Sed <- t(clean.16S[,!colnames(clean.16S)%in%namesTax])
-#Asignar nombres de columnas usando los OTU_IDs
 colnames(Sed)<-Tax
-#Ordenar alfabéticamente las muestras por su nombre
 Sed <- Sed[order(row.names(Sed)),]
 dim(Sed)
-#Calcular cuántas muestras tienen al menos una lectura para cada ASV
+
+#Data filtering
 N <- apply(I(Sed>0), 2, sum)
-#Ver el rango de presencia de ASVs en las muestras
 range(N)
-#Filtrar solo las columnas (ASVs) presentes en al menos una muestra
 rarefaction <- Sed[, N>0] 
 dim(rarefaction)
-#Filtrar ASVs presentes en más de una muestra
+
+#Singleton Removal and Additional Filter
 Sed <- Sed[, N>1]
 dim(Sed)
-#Filtrar nuevamente ASVs con presencia en más de una muestra
 df <- Sed[,apply( Sed, 2, function(x) sum( x>0)) > 1] 
 dim(df)
 
+#Rarefaction curves
 S <- specnumber(rarefaction)
 (raremax <- min(rowSums(rarefaction)))
 Srare <- rarefy(rarefaction, raremax)
@@ -53,26 +48,20 @@ min_sample
 sample_depths[sample_depths == min(sample_depths)]
 sort(sample_depths)
 
-#Guardar los nombres de las columnas del dataframe 'df' (los ASVs seleccionados)
-names=colnames(df)
-#Cargar la tabla de taxonomía y secuencias (archivo .txt)
-table<-read.table("taxa.silva.txt", header = T, sep="\t")
-#Conservar solo las dos primeras columnas (secuencia y nombre del ASV)
+#Read file 
+taxa.silva.txt table<-read.table("taxa.silva.txt", header = T, sep="\t")
 table<-table[,1:2]
-#Volver a definir 'names' (para asergurarse)
 names=colnames(df)
-#Filtrar la tabla para conservar solo las secuencias que están en los ASVs seleccionados
+
+#Filter table to keep only rows with ASVs present in df
 filtered_data <- filter(table, ASV %in% names)
-#Escribir un archivo FASTA con las secuencias filtradas (ASV = secuencia, nombre = ID del ASV)
 write.fasta(sequences =as.list(filtered_data[,1]),names= filtered_data[,2],file.out = "silva.fasta")
-#Leer el archivo FASTA generado (las secuencias están en mayúsculas por defecto, aquí se fuerzan a minúsculas)
+
+#Read FASTA
 silva<-read.fasta(file="silva.fasta", as.string = TRUE, forceDNAtolower = TRUE)
-#Convertir el objeto a clase 'SeqFastadna' para trabajar con secuencias en análisis posteriores
 silva.2<-as.SeqFastadna(silva)
 is.SeqFastadna(silva.2)
-#Mostrar resumen de la segunda secuencia (nucleótidos, longitud, etc.)
 summary(silva.2[[2]])
-
 
 #Make relative
 library(phyloseq)
