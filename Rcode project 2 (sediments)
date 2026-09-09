@@ -1,26 +1,27 @@
+# -------------------------------------
 # Sediment bacterial communities associated with Macrocystis pyrifera forests
-# Analyses and figures for the manuscript
+# Final statistical analyses and figures for the manuscript
+# ----------------------------------------------------------
 #
-# This script starts from the final filtered phyloseq object used for the
-# statistical analyses (Sed_16S_filtered.rds project 2). The object should contain the non-rarefied ASV count
-# table, SILVA taxonomy (v.138.2), sample metadata (Env project 2), and sediment geochemical variables.
+# This script starts from the final filtered phyloseq object (Sed_16S_filtered.rds project 2) used for the
+# statistical analyses. The object should contain the non-rarefied ASV count
+# table, SILVA taxonomy (v.138.2), and sample metadata (Env project 2). Sediment geochemical variables
+# used for the RDA are entered explicitly below because they were not included
+# in the original Env.csv metadata file.
 #
-# Upstream sequence processing (DADA2), contaminant removal (microDecon), and
-# removal of ASVs detected in only one biological.
 #
 # Expected input:
 #   data/Sed_16S_filtered.rds
 #
 # Expected sample_data columns:
-#   Type, Site, Date, Organic_Matter, Total_N, Olsen_P
+#   Type, Site, Date
 #
 # Site levels:
 #   Bahia_Buzo, San_Gregorio, Buque_Quemado
 # Date levels:
 #   August, March
 
-# ---- Packages ----------------------------------------------------------------
-
+# ---- Packages ---------------------------------------
 library(phyloseq)
 library(vegan)
 library(dplyr)
@@ -39,7 +40,7 @@ library(ggalluvial)
 
 set.seed(123)
 
-# ---- Input -------------------------------------------------------------------
+# ---- Input -------------------------------------------------
 
 Sed_16S <- readRDS("data/Sed_16S_filtered.rds")
 
@@ -61,7 +62,7 @@ site_colors <- c(
   "San_Gregorio" = "#d95f02",
   "Buque_Quemado" = "#7570b3")
 
-# 1. Alpha diversity: Hill numbers---------------------
+# 1. Alpha diversity: Hill numbers-----------
 
 hill_counts <- as(otu_table(sed), "matrix")
 if (taxa_are_rows(sed)) hill_counts <- t(hill_counts)
@@ -70,7 +71,7 @@ meta_hill <- data.frame(sample_data(sed))
 meta_hill <- meta_hill[rownames(hill_counts), , drop = FALSE]
 stopifnot(identical(rownames(hill_counts), rownames(meta_hill)))
 
-# Hill numbers: q = 0 (richness), q = 1 (exp Shannon), q = 2 (inverse Simpson)
+# Hill numbers: q = 0 (richness), q = 1 (exp Shannon), q = 2 (inverse Simpson).
 D0 <- specnumber(hill_counts)
 D1 <- exp(diversity(hill_counts, index = "shannon"))
 D2 <- diversity(hill_counts, index = "invsimpson")
@@ -142,8 +143,7 @@ hill_long <- hill %>%
   pivot_longer(
     cols = c(D0, D1, D2),
     names_to = "Hill_Order",
-    values_to = "Diversity") %>%
-  mutate(
+    values_to = "Diversity"  mutate(
     Site = factor(Site, levels = c("Bahia_Buzo", "San_Gregorio", "Buque_Quemado")),
     Date = factor(Date, levels = c("August", "March")),
     Hill_Order = factor(
@@ -205,7 +205,7 @@ Fig_Hill <- ggplot(hill_long, aes(x = Site, y = Diversity, fill = Site)) +
 
 ggsave("outputs/Fig2_Hill_diversity.pdf", Fig_Hill, width = 13, height = 9.5, units = "in")
 
-# 2. Beta diversity: Hellinger-Euclidean distances, NMDS, PERMANOVA, PERMDISP-----------------
+# 2. Beta diversity: Hellinger-Euclidean distances, NMDS, PERMANOVA, PERMDISP------------
 
 otu_beta <- as(otu_table(sed), "matrix")
 if (taxa_are_rows(sed)) otu_beta <- t(otu_beta)
@@ -275,7 +275,6 @@ temporal_results <- bind_rows(lapply(levels(meta_beta$Site), function(s) {
   idx <- meta_beta$Site == s
   x <- run_two_group_test(otu_hell[idx, , drop = FALSE], meta_beta$Date[idx])
   cbind(Site = s, x)}))
-
 temporal_results$p_Holm <- p.adjust(temporal_results$p_raw, method = "holm")
 print(temporal_results)
 
@@ -362,28 +361,68 @@ Fig_NMDS <- ggplot(nmds_scores, aes(x = NMDS1, y = NMDS2)) +
 
 ggsave("outputs/Fig3_NMDS_beta_diversity.pdf", Fig_NMDS, width = 13, height = 9.5, units = "in")
 
-# 3. RDA: sediment geochemistry and bacterial community composition--------------------
+# 3. RDA: sediment geochemistry and bacterial community composition--------
 
-# Build an environmental audit table directly from sediment metadata.
-env_audit <- data.frame(sample_data(sed)) %>%
-  rownames_to_column("ID") %>%
-  mutate(
-    n_observed = rowSums(!is.na(select(., Organic_Matter, Total_N, Olsen_P))))
+# Load sediment geochemical data
+env_measured <- readxl::read_excel("data/Amb1.xlsx")
 
-# Primary complete-case RDA (n = 16 in the manuscript).
+# Environmental variables used in the RDA
+vars_rda <- c(
+  "Organic Matter (%)",
+  "Total N (%)",
+  "Olsen P (mg/kg)")
+
+# Check that all required columns are present
+stopifnot(
+  all(
+    c("ID", "Site", "Type", "Date", vars_rda) %in%
+      colnames(env_measured)))
+
+# Check for duplicated sample IDs
+stopifnot(!anyDuplicated(env_measured$ID))
+
+# Keep sediment samples and variables used in the RDA
+env_audit <- env_measured %>%
+  filter(Type == "Sediment") %>%
+  select(
+    ID,
+    Site,
+    Type,
+    Date,
+    all_of(vars_rda))
+
+# Check that all environmental sample IDs occur in the community matrix
+stopifnot(all(env_audit$ID %in% rownames(otu_hell)))
+
+# Count the number of observed environmental variables per sample
+env_audit$n_observed <- rowSums(
+  !is.na(env_audit[, vars_rda]))
+
+# Check the number of sediment samples
+stopifnot(nrow(env_audit) == 25)
+
+# Inspect environmental-data completeness
+table(env_audit$n_observed)
+
+# Primary complete-case RDA: only samples with all three measured variables.
 env_cc <- env_audit %>% filter(n_observed == 3)
-ids_cc <- env_cc$ID
+stopifnot(nrow(env_cc) == 16)
 
+ids_cc <- env_cc$ID
 otu_rda_cc <- otu_hell[ids_cc, , drop = FALSE]
 env_cc <- env_cc[match(rownames(otu_rda_cc), env_cc$ID), ]
 stopifnot(identical(rownames(otu_rda_cc), env_cc$ID))
 
+# Standardize the three measured geochemical variables to zero mean and unit variance
 env_cc_scaled <- env_cc %>%
-  select(Organic_Matter, Total_N, Olsen_P) %>%
+  select(`Organic Matter (%)`, `Total N (%)`, `Olsen P (mg/kg)`) %>%
   scale() %>%
   as.data.frame()
+
+colnames(env_cc_scaled) <- c("Organic_Matter", "Total_N", "Olsen_P")
 rownames(env_cc_scaled) <- env_cc$ID
 
+# Primary RDA
 rda_cc <- rda(
   otu_rda_cc ~ Organic_Matter + Total_N + Olsen_P,
   data = env_cc_scaled)
@@ -403,12 +442,11 @@ print(anova_cc_global)
 print(anova_cc_axes)
 print(anova_cc_margin)
 
-# Spearman correlations among measured environmental variables.
+# Spearman correlations among the measured environmental variables.
 env_cor <- cor(
-  env_cc[, c("Organic_Matter", "Total_N", "Olsen_P")],
+  env_cc[, c("Organic Matter (%)", "Total N (%)", "Olsen P (mg/kg)")],
   use = "complete.obs",
   method = "spearman")
-
 print(env_cor)
 
 # Holm correction across the three marginal predictor tests.
@@ -416,7 +454,7 @@ margin_p <- anova_cc_margin$`Pr(>F)`[seq_len(3)]
 names(margin_p) <- rownames(anova_cc_margin)[seq_len(3)]
 print(p.adjust(margin_p, method = "holm"))
 
-# Reduced models used to evaluate robustness to OM-TN collinearity.
+# Reduced models used to evaluate robustness to OM-Total N collinearity.
 rda_OM <- rda(
   otu_rda_cc ~ Organic_Matter + Olsen_P,
   data = env_cc_scaled)
@@ -434,17 +472,22 @@ set.seed(123)
 print(anova.cca(rda_N, permutations = 9999))
 
 # Sensitivity analysis for missing environmental observations.
-# Only samples with at least two of the three variables are eligible; a maximum
-# of one missing environmental value per sample is imputed using environmental
-# predictors only.
-env_imp <- env_audit %>% filter(n_observed >= 2) %>%
+# Samples were eligible when at least two of the three variables were observed,
+# so that a maximum of one missing value per sample was imputed.
+env_imp <- env_audit %>%
+  filter(n_observed >= 2) %>%
   mutate(
-    OM_imputed = is.na(Organic_Matter),
-    TotalN_imputed = is.na(Total_N),
-    OlsenP_imputed = is.na(Olsen_P))
+    OM_imputed = is.na(`Organic Matter (%)`),
+    TotalN_imputed = is.na(`Total N (%)`),
+    OlsenP_imputed = is.na(`Olsen P (mg/kg)`))
 
-env_imp_matrix <- env_imp %>% select(Organic_Matter, Total_N, Olsen_P)
+stopifnot(nrow(env_imp) == 20)
 
+env_imp_matrix <- env_imp %>%
+  select(all_of(vars_rda))
+
+# Impute environmental variables only; Site, Date, and ASV abundances are not
+# included as predictors.
 set.seed(123)
 mf_env <- missForest(
   env_imp_matrix,
@@ -453,11 +496,25 @@ mf_env <- missForest(
   variablewise = TRUE,
   verbose = FALSE)
 
-env_imp_final <- env_imp %>%
-  select(ID, Site, Date, n_observed, OM_imputed, TotalN_imputed, OlsenP_imputed) %>%
-  bind_cols(as.data.frame(mf_env$ximp))
+print(mf_env$OOBerror)
 
-# Stability of the four imputed values across 100 random seeds.
+env_imp_values <- mf_env$ximp
+
+env_imp_final <- env_imp %>%
+  select(
+    ID, Site, Date, n_observed,
+    OM_imputed, TotalN_imputed, OlsenP_imputed) %>%
+  bind_cols(as.data.frame(env_imp_values))
+
+# Display the four imputed observations.
+print(
+  env_imp_final %>%
+    filter(OM_imputed | TotalN_imputed | OlsenP_imputed) %>%
+    select(
+      ID, Site, Date, all_of(vars_rda),
+      OM_imputed, TotalN_imputed, OlsenP_imputed))
+
+# Evaluate stability of the four imputed values across 100 random seeds.
 imp_check <- bind_rows(lapply(1:100, function(i) {
   set.seed(i)
   tmp <- missForest(
@@ -465,37 +522,58 @@ imp_check <- bind_rows(lapply(1:100, function(i) {
     ntree = 500,
     maxiter = 10,
     variablewise = TRUE,
-    verbose = FALSE
-  )$ximp
+    verbose = FALSE)$ximp
 
   data.frame(
     seed = i,
-    BQ01_N = tmp[env_imp$ID == "BQ_01", "Total_N"],
-    BQ02M_N = tmp[env_imp$ID == "BQ_02_M", "Total_N"],
-    BQ03M_P = tmp[env_imp$ID == "BQ_03_M", "Olsen_P"],
-    SG02M_N = tmp[env_imp$ID == "SG_02_M", "Total_N"])}))
+    BQ01_N = tmp[env_imp$ID == "BQ_01", "Total N (%)"],
+    BQ02M_N = tmp[env_imp$ID == "BQ_02_M", "Total N (%)"],
+    BQ03M_P = tmp[env_imp$ID == "BQ_03_M", "Olsen P (mg/kg)"],
+    SG02M_N = tmp[env_imp$ID == "SG_02_M", "Total N (%)"])}))
 
 print(summary(imp_check))
+print(sapply(
+  imp_check[, -1],
+  function(x) c(median = median(x), IQR = IQR(x), min = min(x), max = max(x))))
 
+# Fit the sensitivity RDA using the measured + imputed environmental values.
 ids_imp <- env_imp_final$ID
 otu_rda_imp <- otu_hell[ids_imp, , drop = FALSE]
-env_imp_final <- env_imp_final[match(rownames(otu_rda_imp), env_imp_final$ID), ]
+env_imp_final <- env_imp_final[
+  match(rownames(otu_rda_imp), env_imp_final$ID),]
 stopifnot(identical(rownames(otu_rda_imp), env_imp_final$ID))
 
 env_imp_scaled <- env_imp_final %>%
-  select(Organic_Matter, Total_N, Olsen_P) %>%
+  select(`Organic Matter (%)`, `Total N (%)`, `Olsen P (mg/kg)`) %>%
   scale() %>%
   as.data.frame()
+
+colnames(env_imp_scaled) <- c("Organic_Matter", "Total_N", "Olsen_P")
 rownames(env_imp_scaled) <- env_imp_final$ID
 
 rda_imp <- rda(
   otu_rda_imp ~ Organic_Matter + Total_N + Olsen_P,
   data = env_imp_scaled)
 
+print(vif.cca(rda_imp))
 print(RsquareAdj(rda_imp))
 
 set.seed(123)
-print(anova.cca(rda_imp, permutations = 9999))
+anova_imp_global <- anova.cca(rda_imp, permutations = 9999)
+print(anova_imp_global)
+
+set.seed(123)
+anova_imp_axes <- anova.cca(rda_imp, by = "axis", permutations = 9999)
+print(anova_imp_axes)
+
+set.seed(123)
+anova_imp_margin <- anova.cca(rda_imp, by = "margin", permutations = 9999)
+print(anova_imp_margin)
+
+# Holm-adjusted marginal p-values for the sensitivity RDA.
+margin_p_imp <- anova_imp_margin$`Pr(>F)`[seq_len(3)]
+names(margin_p_imp) <- rownames(anova_imp_margin)[seq_len(3)]
+print(p.adjust(margin_p_imp, method = "holm"))
 
 # Percentage of total and constrained variation represented by RDA1 and RDA2.
 eig_rda <- rda_cc$CCA$eig
@@ -556,13 +634,15 @@ Fig_RDA <- ggplot(rda_samples, aes(x = RDA1, y = RDA2)) +
     plot.background = element_rect(fill = "white", colour = NA),
     legend.title = element_text(face = "bold", size = 16),
     legend.text = element_text(size = 15),
-    legend.position = "bottom")
+    legend.position = "bottom"
+  )
 
 # ASVs used for Figure 4B: prevalence >= 50% among complete-case samples and
 # absolute RDA1 species score >= 0.05. These are descriptive species scores,
 # not taxon-specific significance tests.
 asv_scores <- as.data.frame(
-  scores(rda_cc, display = "species", choices = 1:2, scaling = 2)) %>% rownames_to_column("ASV")
+  scores(rda_cc, display = "species", choices = 1:2, scaling = 2)) %>%
+  rownames_to_column("ASV")
 
 prevalence_cc <- colSums(otu_rda_cc > 0) / nrow(otu_rda_cc)
 tax_df <- as.data.frame(tax_table(sed)) %>% rownames_to_column("ASV")
@@ -617,7 +697,7 @@ RDA_figure <- patchwork::wrap_plots(
 
 ggsave("outputs/Fig4_RDA.svg", RDA_figure, width = 17, height = 11, units = "in")
 
-# 4. Descriptive family-level taxonomic profiles
+# 4. Descriptive family-level taxonomic profiles-------------
 
 sed_rel <- transform_sample_counts(sed, function(x) x / sum(x))
 sed_family <- tax_glom(sed_rel, taxrank = "Family")
@@ -677,7 +757,7 @@ Fig_Family <- ggplot(heat_df, aes(x = Date, y = Family, fill = Abundance)) +
 
 ggsave("outputs/Fig5_family_heatmap.pdf", Fig_Family, width = 17, height = 11, units = "in")
 
-# 5. Prevalence-based core microbiome
+# 5. Prevalence-based core microbiome----------------
 
 sed_core_rel <- transform_sample_counts(sed, function(x) x / sum(x))
 core_mat <- as(otu_table(sed_core_rel), "matrix")
@@ -865,142 +945,256 @@ Fig_Core <- patchwork::wrap_plots(
 
 ggsave("outputs/Fig6_core_sensitivity.pdf", Fig_Core, width = 17, height = 11, units = "in")
 
-# Taxonomic core tables used in the Supplementary Information.
-make_core_table <- function(variable, group, prevalence = 0.90, detection = 0.001) {
-  res <- get_core(core_mat, core_meta, variable, group, detection, prevalence) %>%
-    filter(core)
+# 6. Supplementary phylum-level sediment and seawater profiles-------------
 
-  ids <- core_meta$SampleID[core_meta[[variable]] == group]
-  mean_ra <- colMeans(core_mat[ids, , drop = FALSE]) * 100
-
-  res %>%
-    transmute(
-      Group = group,
-      ASV,
-      n_samples,
-      n_detected,
-      Prevalence = prevalence,
-      Mean_RA_percent = mean_ra[ASV]
-    ) %>%
-    left_join(tax_core, by = "ASV")}
-
-core_aug_table <- make_core_table("Date", "August")
-core_mar_table <- make_core_table("Date", "March")
-core_bb_table <- make_core_table("Site", "Bahia_Buzo")
-core_sg_table <- make_core_table("Site", "San_Gregorio")
-core_bq_table <- make_core_table("Site", "Buque_Quemado")
-
-clean_core_table <- function(x) {
-  x %>%
-    select(ASV, Phylum, Class, Order, Family, Genus) %>%
-    mutate(ASV_number = as.numeric(gsub("ASV_", "", ASV))) %>%
-    arrange(ASV_number) %>%
-    select(-ASV_number)}
-
-Table_S5A <- clean_core_table(core_aug_table)
-Table_S5B <- clean_core_table(core_mar_table)
-Table_S5C <- clean_core_table(core_bb_table)
-Table_S5D <- clean_core_table(core_sg_table)
-Table_S5E <- clean_core_table(core_bq_table)
-Table_S5F <- tax_core %>%
-  filter(ASV %in% global_core_90) %>%
-  mutate(ASV_number = as.numeric(gsub("ASV_", "", ASV))) %>%
-  arrange(ASV_number) %>%
-  select(ASV, Phylum, Class, Order, Family, Genus)
-
-Table_S5G <- bind_rows(
-  core_sensitivity_table %>%
-    transmute(
-      Scale = Variable,
-      Group,
-      Detection_threshold = Detection * 100,
-      Prevalence_threshold = Prevalence_threshold * 100,
-      n_samples,
-      min_samples_required,
-      n_core),
-  global_sensitivity %>%
-    transmute(
-      Scale = Variable,
-      Group,
-      Detection_threshold = Detection * 100,
-      Prevalence_threshold = Prevalence_threshold * 100,
-      n_samples,
-      min_samples_required,
-      n_core))
-
-write_xlsx(
-  list(
-    "S5A_August" = Table_S5A,
-    "S5B_March" = Table_S5B,
-    "S5C_Bahia_Buzo" = Table_S5C,
-    "S5D_San_Gregorio" = Table_S5D,
-    "S5E_Buque_Quemado" = Table_S5E,
-    "S5F_Regional_Core" = Table_S5F,
-    "S5G_Sensitivity" = Table_S5G),
-  "outputs/Supplementary_Core_Tables.xlsx")
-
-# Correspondence between RDA1 ASVs and the 90% site-specific cores.
-rda_core_overlap <- asv_rda_selected %>%
-  mutate(
-    BB_core_90 = ASV %in% bb_90,
-    SG_core_90 = ASV %in% sg_90,
-    BQ_core_90 = ASV %in% bq_90)
-print(rda_core_overlap)
-
-# 6. Supplementary phylum-level sediment and seawater profiles
-
-# Seawater samples are included only as qualitative taxonomic references.
+library(dplyr)
+library(ggplot2)
+library(ggalluvial)
 Sediments <- subset_samples(Sed_16S, Type == "Sediment")
 Water <- subset_samples(Sed_16S, Type == "Sea_Water")
 
-# Helper to summarize phylum-level mean relative abundance by group. Phyla with
-# mean abundance <5% are grouped as "Other" rather than removing and
-# renormalizing them.
-summarize_phyla <- function(ps, grouping_vars) {
-  x <- ps %>%
-    tax_glom(taxrank = "Phylum") %>%
-    transform_sample_counts(function(z) z / sum(z)) %>%
-    psmelt()
+phylumabundance <- Sediments %>%
+  tax_glom(taxrank = "Phylum")%>%                     # agglomerate at genus level
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance
+  psmelt() %>%                                         # Melt to long format
+  arrange(Phylum) 
+head(phylumabundance)
 
-  x %>%
-    group_by(across(all_of(c(grouping_vars, "Phylum")))) %>%
-    summarise(Mean_RA = mean(Abundance), .groups = "drop") %>%
-    group_by(across(all_of(grouping_vars))) %>%
-    mutate(Phylum_plot = if_else(Mean_RA >= 0.05, as.character(Phylum), "Other")) %>%
-    group_by(across(all_of(c(grouping_vars, "Phylum_plot")))) %>%
-    summarise(Mean_RA = sum(Mean_RA), .groups = "drop")}
 
-sed_phylum <- summarize_phyla(Sediments, c("Site", "Date"))
-water_phylum <- summarize_phyla(Water, c("Site", "Date"))
+all_no_other <- phylumabundance %>%
+  filter(Type != "Sea_Water") %>%
+  select(Phylum, Type, Date, Abundance) %>%
+  group_by(Phylum, Type, Date) %>%
+  summarize(avg_abundance = mean(Abundance), .groups = "drop") %>%
+  # Filtrar filos >= 5%
+  filter(avg_abundance >= 0.05) %>%
+  # Renormalizar para que sumen 1 dentro de Type × Date
+  group_by(Type, Date) %>%
+  mutate(avg_abundance = avg_abundance / sum(avg_abundance)) %>%
+  ungroup()
 
-# The exact visual layout of Supplementary Figure S1 can be reproduced from
-# sed_phylum and water_phylum. These tables are saved to make the qualitative
-# comparison fully transparent.
-write.csv(sed_phylum, "outputs/Supplementary_S1_sediment_phyla.csv", row.names = FALSE)
-write.csv(water_phylum, "outputs/Supplementary_S1_seawater_phyla.csv", row.names = FALSE)
+colors=c(Actinomycetota="#E7EBFA", Acidobacteriota= "#FFFFF0", Chloroflexota="#AB82FF",Cyanobacteriota ="#E0FFFF", 
+         Bacteroidota="#BA55D3",Thermodesulfobacteriota="#698B22", Bacillota = "#CD8C95",Pseudomonadota= "#B8860B",
+         Planctomycetota="#8FBC8F",	Verrucomicrobiota="#F0E68C")
 
-# 7. Genus-level taxonomic resolution
+# Colores solo para los filos que quedan
+colors_no_other <- colors[names(colors) != "Other"]
+
+# Definir un tema común
+my_theme <- theme(
+  axis.text.y.left = element_text(size = 14),
+  axis.title.y = element_text(size = 16),
+  axis.text.x = element_blank(),
+  title = element_text(size = 16),
+  legend.text = element_text(size = 16),
+  strip.text.x = element_text(size = 15)
+)
+
+# Plot ggalluvial sin Others
+p_no_other <- ggplot(all_no_other,
+                     aes(x = factor(Date, levels = c("August", "March")),
+                         y = avg_abundance,
+                         alluvium = Phylum,
+                         stratum = Phylum,
+                         fill = Phylum)) +
+  geom_flow(alpha = 0.35, width = 0.5, color = "black") +
+  geom_stratum(color = "black", width = 0.5) +
+  facet_grid(. ~ Type) +
+  ylab("Relative abundance (%)") +
+  xlab("") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = colors_no_other, drop = FALSE) +
+  my_theme +
+  labs(tag = "A") +
+  theme(plot.tag = element_text(size = 20, face = "bold"),
+        plot.tag.position = c(0.03, 0.98),
+        legend.position = "none")
+
+# Por sitio, excluyendo Sea_Water
+all_sitio_no_other <- phylumabundance %>%
+  filter(Type != "Sea_Water") %>%
+  group_by(Phylum, Site, Date) %>%
+  summarize(avg_abundance = mean(Abundance), .groups = "drop") %>%
+  filter(avg_abundance >= 0.05) %>%               # solo filos importantes
+  group_by(Site, Date) %>%
+  mutate(avg_abundance = avg_abundance / sum(avg_abundance)) %>%
+  ungroup()
+
+p6_no_other <- ggplot(all_sitio_no_other,
+                      aes(x = factor(Date, levels = c("August", "March")),
+                          y = avg_abundance,
+                          alluvium = Phylum,
+                          stratum = Phylum,
+                          fill = Phylum)) +
+  geom_flow(alpha = 0.35, width = 0.5, color = "black") +
+  geom_stratum(color = "black", width = 0.5) +
+  facet_grid(. ~ factor(Site, levels = c("Bahia_Buzo", "San_Gregorio", "Buque_Quemado"))) + 
+  ylab("") +
+  xlab("") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = colors[names(colors) != "Other"], drop = FALSE) +
+  my_theme +
+  labs(tag = "B") +
+  theme(plot.tag = element_text(size = 20, face = "bold"),
+        plot.tag.position = c(0.03, 0.98))
+
+my_theme <- theme(
+  axis.text.y.left = element_text(size = 14),
+  axis.title.y = element_text(size = 16),
+  axis.text.x = element_text(size = 18, vjust = 1, hjust = 1, angle = 45),
+  title = element_text(size = 16),
+  legend.text = element_text(size = 16),
+  strip.text.x = element_text(size = 15))
+
+# Agua, excluyendo Sediment
+phylumabundance <- Water %>%
+  tax_glom(taxrank = "Phylum")%>%                     # agglomerate at genus level
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance
+  psmelt() %>%                                         # Melt to long format
+  arrange(Phylum) 
+head(phylumabundance)
+
+all_water_no_other <- phylumabundance %>%
+  #filter( Type != "Sediment") %>%
+  select(Phylum, Type, Date, Abundance) %>%
+  group_by(Phylum, Type, Date) %>%
+  summarize(avg_abundance = mean(Abundance), .groups = "drop") %>%
+  filter(avg_abundance >= 0.05)
+
+all_water_no_other <- all_water_no_other %>%
+  group_by(Type, Date) %>%
+  mutate(avg_abundance = avg_abundance / sum(avg_abundance)) %>%
+  ungroup()
+
+
+colors=c(Bacteroidota="#BA55D3",Cyanobacteriota ="#E0FFFF", 
+         Pseudomonadota= "#B8860B",Verrucomicrobiota="#F0E68C")
+colors_w <- colors[names(colors) != "Other"]
+
+w5_no_other <- ggplot(all_water_no_other,
+                      aes(x = factor(Date, levels = c("August", "March")),
+                          y = avg_abundance,
+                          alluvium = Phylum,
+                          stratum = Phylum,
+                          fill = Phylum)) +
+  geom_flow(alpha = 0.35, width = 0.5, color = "black") +
+  geom_stratum(color = "black", width = 0.5) +
+  facet_grid(. ~ Type) +
+  ylab("Relative abundance (%)") +
+  xlab("") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = colors_w[names(colors_w) != "Other"], drop = FALSE) +
+  my_theme +
+  labs(tag = "C") +
+  theme(plot.tag = element_text(size = 20, face = "bold"),
+        plot.tag.position = c(0.03, 0.98),
+        legend.position = "none")
+
+# Agua por sitio, excluyendo Sediment
+all_sitio_water_no_other <- phylumabundance %>%
+  filter(Type != "Sediment") %>%
+  group_by(Phylum, Site, Date) %>%
+  summarize(avg_abundance = mean(Abundance), .groups = "drop") %>%
+  filter(avg_abundance >= 0.05) %>%
+  group_by(Site, Date) %>%
+  mutate(avg_abundance = avg_abundance / sum(avg_abundance)) %>%
+  ungroup()
+
+w6_no_other <- ggplot(all_sitio_water_no_other,
+                      aes(x = factor(Date, levels = c("August", "March")),
+                          y = avg_abundance,
+                          alluvium = Phylum,
+                          stratum = Phylum,
+                          fill = Phylum)) +
+  geom_flow(alpha = 0.35, width = 0.5, color = "black") +
+  geom_stratum(color = "black", width = 0.5) +
+  facet_grid(. ~ factor(Site, levels = c("Bahia_Buzo", "San_Gregorio", "Buque_Quemado"))) + 
+  ylab("") +
+  xlab("") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = colors_w[names(colors_w) != "Other"], drop = FALSE) +
+  my_theme +
+  labs(tag = "D") +
+  theme(plot.tag = element_text(size = 20, face = "bold"),
+        plot.tag.position = c(0.03, 0.98))
+
+# Combinar plots
+WSP_no_other <- (p_no_other | p6_no_other) / (w5_no_other | w6_no_other)
+WSP_no_other
+
+# 7. Genus-level taxonomic resolution--------------
 
 # Percentage of mean relative abundance unresolved at genus level for each
 # site-by-date sediment group. This supports the genus-resolution statement in
 # the Results and the decision to emphasize family-level profiles.
-sed_genus_long <- psmelt(sed_rel) %>%
-  mutate(
-    Genus_resolved = !is.na(Genus) & Genus != "" & toupper(as.character(Genus)) != "NA")
 
-genus_resolution <- sed_genus_long %>%
-  group_by(Site, Date, Sample) %>%
-  summarise(
-    Unresolved_RA = sum(Abundance[!Genus_resolved]),
-    .groups = "drop") %>%
-  group_by(Site, Date) %>%
-  summarise(
-    Mean_unresolved_percent = mean(Unresolved_RA) * 100,
-    .groups = "drop")
+obj <- Sed_16S
 
-print(genus_resolution)
-write.csv(genus_resolution, "outputs/Supplementary_S2_genus_resolution.csv", row.names = FALSE)
+# Eliminar taxa con abundancia total = 0, por seguridad
+obj <- prune_taxa(taxa_sums(obj) > 0, obj)
 
-# 8. Reproducibility information
+otu <- as(otu_table(obj), "matrix")
 
-writeLines(capture.output(sessionInfo()), "outputs/sessionInfo.txt")
+# AMPvis2 necesita taxa en filas
+if (!taxa_are_rows(obj)) {otu <- t(otu)}
+
+otu <- as.data.frame(otu, check.names = FALSE)
+
+tax <- as(tax_table(obj), "matrix") %>%
+  as.data.frame(check.names = FALSE)
+
+# Asegurar mismo orden
+tax <- tax[rownames(otu), , drop = FALSE]
+
+# Mantener explícitamente la fracción no resuelta a género
+tax$Genus <- as.character(tax$Genus)
+
+tax$Genus[is.na(tax$Genus) |
+    tax$Genus == "" | tax$Genus == "NA"] <- "Unresolved"
+
+tax$Species <- tax$Genus
+
+otutable <- cbind(otu, tax)
+
+# Metadata
+
+env <- data.frame(sample_data(obj), check.names = FALSE)
+
+env$SampleID <- rownames(env)
+
+env$Site <- factor(
+  env$Site,
+  levels = c("Bahia_Buzo", "San_Gregorio", "Buque_Quemado"))
+
+env$Date <- factor(env$Date, levels = c("March", "August"))
+
+av2_sed <- amp_load(otutable = otutable, metadata = env)
+
+gen <- amp_heatmap(
+  av2_sed,
+  tax_show = 15, group_by = "Date", facet_by = "Site",
+  tax_aggregate = "Genus",
+  # Números dentro de las celdas
+  plot_values = TRUE,
+  plot_values_size = 6,
+  plot_colorscale = "log10",
+  color_vector = c( "#5666B6", "whitesmoke", "#B2182B"), round = 1) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(size = 18, angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 18, face = "plain"),
+    strip.text = element_text(size = 18, face = "plain"),
+    legend.title = element_text(size = 16),
+    legend.text = element_text(size = 16),
+    panel.grid = element_blank(),
+    panel.spacing = grid::unit(1.3, "lines")) +
+  labs(x = NULL, y = NULL) + ggtitle("")
+
+gen
+ggsave(
+  filename = "genus.pdf",
+  plot = gen, #nombre del plot
+  device = "pdf", #Formato vectorial para inkscape
+  width = 17, height =11, units = "in")
+
+
