@@ -7,7 +7,7 @@
 # statistical analyses. The object should contain the non-rarefied ASV count
 # table, SILVA taxonomy (v.138.2), and sample metadata (Env project 2). Sediment geochemical variables
 # used for the RDA are entered explicitly below because they were not included
-# in the original Env.csv metadata file.
+# in the original Env.csv metadata file
 #
 #
 # Expected input:
@@ -48,7 +48,7 @@ Sed_16S <- readRDS("data/Sed_16S_filtered.rds")
 sed <- subset_samples(Sed_16S, Type == "Sediment")
 sed <- prune_taxa(taxa_sums(sed) > 0, sed)
 
-# Standardize factor order used throughout the manuscript.
+# Standardize factor order used throughout the manuscript
 sample_data(sed)$Site <- factor(
   sample_data(sed)$Site,
   levels = c("Bahia_Buzo", "San_Gregorio", "Buque_Quemado"))
@@ -62,7 +62,7 @@ site_colors <- c(
   "San_Gregorio" = "#d95f02",
   "Buque_Quemado" = "#7570b3")
 
-# 1. Alpha diversity: Hill numbers-----------
+#1 Alpha diversity: Hill numbers-----------
 
 hill_counts <- as(otu_table(sed), "matrix")
 if (taxa_are_rows(sed)) hill_counts <- t(hill_counts)
@@ -104,7 +104,7 @@ hill_summary <- hill %>%
     .groups = "drop")
 print(hill_summary)
 
-# Exact Kruskal-Wallis tests were used because replication was small and unequal.
+# Exact Kruskal-Wallis tests were used because replication was small and unequal
 hill_aug <- hill %>% filter(Date == "August") %>% arrange(Site) %>% droplevels()
 hill_mar <- hill %>% filter(Date == "March") %>% arrange(Site) %>% droplevels()
 
@@ -116,7 +116,7 @@ kw_mar_D0 <- ANSM5::kruskal.wallis(hill_mar$D0, hill_mar$Site, do.exact = TRUE, 
 kw_mar_D1 <- ANSM5::kruskal.wallis(hill_mar$D1, hill_mar$Site, do.exact = TRUE, do.asymp = TRUE)
 kw_mar_D2 <- ANSM5::kruskal.wallis(hill_mar$D2, hill_mar$Site, do.exact = TRUE, do.asymp = TRUE)
 
-# Exact pairwise Wilcoxon tests with Holm correction.
+#Exact pairwise Wilcoxon tests with Holm correction
 pw_aug_D1 <- pairwise.wilcox.test(
   hill_aug$D1, hill_aug$Site,
   p.adjust.method = "holm", exact = TRUE)
@@ -138,7 +138,7 @@ print(pw_mar_D0)
 print(pw_mar_D1)
 print(pw_mar_D2)
 
-# Figure 2: Hill diversity.
+# Figure 2: Hill diversity
 hill_long <- hill %>%
   pivot_longer(
     cols = c(D0, D1, D2),
@@ -152,7 +152,7 @@ hill_long <- hill %>%
       labels = c("q = 0", "q = 1", "q = 2")))
 
 # Reported Holm-adjusted SG-BQ post-hoc p-value in March was 0.024 for all
-# three Hill orders. The exact August q = 1 Kruskal-Wallis p-value was 0.025.
+#three Hill orders. The exact August q = 1 Kruskal-Wallis p-value was 0.025
 sig_march <- hill_long %>%
   filter(Date == "March") %>%
   group_by(Date, Hill_Order) %>%
@@ -203,9 +203,9 @@ Fig_Hill <- ggplot(hill_long, aes(x = Site, y = Diversity, fill = Site)) +
     axis.title.y = element_text(size = 15),
     legend.position = "none")
 
-ggsave("outputs/Fig2_Hill_diversity.pdf", Fig_Hill, width = 13, height = 9.5, units = "in")
+ggsave("outputs/Fig.pdf", Fig_Hill, width = 13, height = 9.5, units = "in")
 
-# 2. Beta diversity: Hellinger-Euclidean distances, NMDS, PERMANOVA, PERMDISP------------
+#2 Beta diversity: Hellinger-Euclidean distances, NMDS, PERMANOVA, PERMDISP------------
 
 otu_beta <- as(otu_table(sed), "matrix")
 if (taxa_are_rows(sed)) otu_beta <- t(otu_beta)
@@ -214,18 +214,18 @@ meta_beta <- data.frame(sample_data(sed))
 meta_beta <- meta_beta[rownames(otu_beta), , drop = FALSE]
 stopifnot(identical(rownames(otu_beta), rownames(meta_beta)))
 
-# Hellinger transformation followed by Euclidean distance.
+# Hellinger transformation followed by Euclidean distance
 otu_hell <- decostand(otu_beta, method = "hellinger")
 dist_beta <- dist(otu_hell, method = "euclidean")
 
-# Global dispersion across the six site-by-date groups.
+# Global dispersion across the six site-by-date groups
 meta_beta$Group <- interaction(meta_beta$Site, meta_beta$Date, drop = TRUE)
 disp_group <- betadisper(dist_beta, meta_beta$Group, type = "median", bias.adjust = TRUE)
 set.seed(123)
 disp_group_test <- permutest(disp_group, permutations = 9999)
 print(disp_group_test)
 
-# Global PERMANOVA and marginal interaction test.
+#Global PERMANOVA and marginal interaction test
 set.seed(123)
 permanova_full <- adonis2(
   dist_beta ~ Site * Date,
@@ -243,7 +243,7 @@ permanova_margin <- adonis2(
 
 print(permanova_margin)
 
-# Helper for simple effects and pairwise tests.
+#Helper for simple effects and pairwise tests
 run_two_group_test <- function(otu_matrix, grouping, permutations = 9999) {
   grouping <- droplevels(factor(grouping))
   d <- dist(otu_matrix, method = "euclidean")
@@ -261,7 +261,7 @@ run_two_group_test <- function(otu_matrix, grouping, permutations = 9999) {
     p_raw = perm$`Pr(>F)`[1],
     p_dispersion = disp_test$tab$`Pr(>F)`[1])}
 
-# Spatial simple effects within each sampling period.
+# Spatial simple effects within each sampling period
 spatial_results <- bind_rows(lapply(levels(meta_beta$Date), function(d) {
   idx <- meta_beta$Date == d
   x <- run_two_group_test(otu_hell[idx, , drop = FALSE], meta_beta$Site[idx])
@@ -270,7 +270,7 @@ spatial_results <- bind_rows(lapply(levels(meta_beta$Date), function(d) {
 spatial_results$p_Holm <- p.adjust(spatial_results$p_raw, method = "holm")
 print(spatial_results)
 
-# Sampling-period simple effects within each site.
+# Sampling-period simple effects within each site
 temporal_results <- bind_rows(lapply(levels(meta_beta$Site), function(s) {
   idx <- meta_beta$Site == s
   x <- run_two_group_test(otu_hell[idx, , drop = FALSE], meta_beta$Date[idx])
@@ -278,7 +278,7 @@ temporal_results <- bind_rows(lapply(levels(meta_beta$Site), function(s) {
 temporal_results$p_Holm <- p.adjust(temporal_results$p_raw, method = "holm")
 print(temporal_results)
 
-# Pairwise spatial PERMANOVA within a sampling period.
+# Pairwise spatial PERMANOVA within a sampling period
 run_pairwise_sites <- function(date_value) {
   idx_date <- meta_beta$Date == date_value
   x <- otu_hell[idx_date, , drop = FALSE]
@@ -301,7 +301,7 @@ pairwise_mar <- run_pairwise_sites("March")
 print(pairwise_aug)
 print(pairwise_mar)
 
-# NMDS ordination used in the manuscript.
+# NMDS ordination used in the manuscript
 set.seed(123)
 nmds_beta <- metaMDS(
   dist_beta,
@@ -319,7 +319,7 @@ nmds_scores <- cbind(
   nmds_scores,
   meta_beta[nmds_scores$ID, c("Site", "Date")])
 
-# Convex hulls are shown only for groups with at least three samples.
+#Convex hulls are shown only for groups with at least three samples
 nmds_hull <- nmds_scores %>%
   group_by(Site, Date) %>%
   filter(n() >= 3) %>%
@@ -359,9 +359,9 @@ Fig_NMDS <- ggplot(nmds_scores, aes(x = NMDS1, y = NMDS2)) +
     legend.text = element_text(size = 15),
     legend.position = "right")
 
-ggsave("outputs/Fig3_NMDS_beta_diversity.pdf", Fig_NMDS, width = 13, height = 9.5, units = "in")
+ggsave("outputs/Fig3.pdf", Fig_NMDS, width = 13, height = 9.5, units = "in")
 
-# 3. RDA: sediment geochemistry and bacterial community composition--------
+#3 RDA: sediment geochemistry and bacterial community composition--------
 
 # Load sediment geochemical data
 env_measured <- readxl::read_excel("data/Amb1.xlsx")
@@ -391,20 +391,20 @@ env_audit <- env_measured %>%
     Date,
     all_of(vars_rda))
 
-# Check that all environmental sample IDs occur in the community matrix
+#Check that all environmental sample IDs occur in the community matrix
 stopifnot(all(env_audit$ID %in% rownames(otu_hell)))
 
 # Count the number of observed environmental variables per sample
 env_audit$n_observed <- rowSums(
   !is.na(env_audit[, vars_rda]))
 
-# Check the number of sediment samples
+#Check the number of sediment samples
 stopifnot(nrow(env_audit) == 25)
 
-# Inspect environmental-data completeness
+#Inspect environmental-data completeness
 table(env_audit$n_observed)
 
-# Primary complete-case RDA: only samples with all three measured variables.
+# Primary complete-case RDA: only samples with all three measured variables
 env_cc <- env_audit %>% filter(n_observed == 3)
 stopifnot(nrow(env_cc) == 16)
 
@@ -427,7 +427,7 @@ rda_cc <- rda(
   otu_rda_cc ~ Organic_Matter + Total_N + Olsen_P,
   data = env_cc_scaled)
 
-# Collinearity, explained variation, model significance, axes, and marginal tests.
+# Collinearity, explained variation, model significance, axes, and marginal tests
 print(vif.cca(rda_cc))
 print(RsquareAdj(rda_cc))
 
@@ -442,19 +442,19 @@ print(anova_cc_global)
 print(anova_cc_axes)
 print(anova_cc_margin)
 
-# Spearman correlations among the measured environmental variables.
+#Spearman correlations among the measured environmental variables
 env_cor <- cor(
   env_cc[, c("Organic Matter (%)", "Total N (%)", "Olsen P (mg/kg)")],
   use = "complete.obs",
   method = "spearman")
 print(env_cor)
 
-# Holm correction across the three marginal predictor tests.
+#Holm correction across the three marginal predictor tests
 margin_p <- anova_cc_margin$`Pr(>F)`[seq_len(3)]
 names(margin_p) <- rownames(anova_cc_margin)[seq_len(3)]
 print(p.adjust(margin_p, method = "holm"))
 
-# Reduced models used to evaluate robustness to OM-Total N collinearity.
+# Reduced models used to evaluate robustness to OM-Total N collinearity
 rda_OM <- rda(
   otu_rda_cc ~ Organic_Matter + Olsen_P,
   data = env_cc_scaled)
@@ -471,9 +471,9 @@ print(RsquareAdj(rda_N))
 set.seed(123)
 print(anova.cca(rda_N, permutations = 9999))
 
-# Sensitivity analysis for missing environmental observations.
-# Samples were eligible when at least two of the three variables were observed,
-# so that a maximum of one missing value per sample was imputed.
+# Sensitivity analysis for missing environmental observations
+# Samples were eligible when at least two of the three variables were observed
+#so that a maximum of one missing value per sample was imputed
 env_imp <- env_audit %>%
   filter(n_observed >= 2) %>%
   mutate(
@@ -487,7 +487,7 @@ env_imp_matrix <- env_imp %>%
   select(all_of(vars_rda))
 
 # Impute environmental variables only; Site, Date, and ASV abundances are not
-# included as predictors.
+#included as predictors
 set.seed(123)
 mf_env <- missForest(
   env_imp_matrix,
@@ -506,7 +506,7 @@ env_imp_final <- env_imp %>%
     OM_imputed, TotalN_imputed, OlsenP_imputed) %>%
   bind_cols(as.data.frame(env_imp_values))
 
-# Display the four imputed observations.
+# Display the four imputed observations
 print(
   env_imp_final %>%
     filter(OM_imputed | TotalN_imputed | OlsenP_imputed) %>%
@@ -514,7 +514,7 @@ print(
       ID, Site, Date, all_of(vars_rda),
       OM_imputed, TotalN_imputed, OlsenP_imputed))
 
-# Evaluate stability of the four imputed values across 100 random seeds.
+# Evaluate stability of the four imputed values across 100 random seeds
 imp_check <- bind_rows(lapply(1:100, function(i) {
   set.seed(i)
   tmp <- missForest(
@@ -536,7 +536,7 @@ print(sapply(
   imp_check[, -1],
   function(x) c(median = median(x), IQR = IQR(x), min = min(x), max = max(x))))
 
-# Fit the sensitivity RDA using the measured + imputed environmental values.
+# Fit the sensitivity RDA using the measured + imputed environmental values
 ids_imp <- env_imp_final$ID
 otu_rda_imp <- otu_hell[ids_imp, , drop = FALSE]
 env_imp_final <- env_imp_final[
@@ -570,12 +570,12 @@ set.seed(123)
 anova_imp_margin <- anova.cca(rda_imp, by = "margin", permutations = 9999)
 print(anova_imp_margin)
 
-# Holm-adjusted marginal p-values for the sensitivity RDA.
+#Holm-adjusted marginal p-values for the sensitivity RDA
 margin_p_imp <- anova_imp_margin$`Pr(>F)`[seq_len(3)]
 names(margin_p_imp) <- rownames(anova_imp_margin)[seq_len(3)]
 print(p.adjust(margin_p_imp, method = "holm"))
 
-# Percentage of total and constrained variation represented by RDA1 and RDA2.
+#Percentage of total and constrained variation represented by RDA1 and RDA2
 eig_rda <- rda_cc$CCA$eig
 RDA1_total <- 100 * eig_rda[1] / rda_cc$tot.chi
 RDA2_total <- 100 * eig_rda[2] / rda_cc$tot.chi
@@ -588,7 +588,7 @@ print(c(
   RDA1_constrained = RDA1_constrained,
   RDA2_constrained = RDA2_constrained))
 
-# Site scores and environmental vectors for Figure 4A.
+# Site scores and environmental vectors for Figure 4A
 rda_samples <- as.data.frame(scores(rda_cc, display = "sites", choices = 1:2, scaling = 2)) %>%
   rownames_to_column("ID") %>%
   left_join(env_cc[, c("ID", "Site", "Date")], by = "ID")
@@ -695,9 +695,9 @@ RDA_figure <- patchwork::wrap_plots(
   nrow = 1,
   widths = c(1, 1.15))
 
-ggsave("outputs/Fig4_RDA.svg", RDA_figure, width = 17, height = 11, units = "in")
+ggsave("outputs/Fig4.svg", RDA_figure, width = 17, height = 11, units = "in")
 
-# 4. Descriptive family-level taxonomic profiles-------------
+#4 Descriptive family-level taxonomic profiles-------------
 
 sed_rel <- transform_sample_counts(sed, function(x) x / sum(x))
 sed_family <- tax_glom(sed_rel, taxrank = "Family")
@@ -708,7 +708,7 @@ df_family <- psmelt(sed_family) %>%
     Family != "Unknown Family",
     Family != "NA")
 
-# Select the 18 families with the highest mean relative abundance across samples.
+# Select the 18 families with the highest mean relative abundance across samples
 top_families <- df_family %>%
   group_by(Family) %>%
   summarise(Mean_RA = mean(Abundance), .groups = "drop") %>%
@@ -716,7 +716,7 @@ top_families <- df_family %>%
   slice_head(n = 18) %>%
   pull(Family)
 
-# Mean read abundance (%) for each site-by-date group.
+# Mean read abundance (%) for each site-by-date group
 heat_df <- df_family %>%
   filter(Family %in% top_families) %>%
   group_by(Site, Date, Family) %>%
@@ -755,9 +755,9 @@ Fig_Family <- ggplot(heat_df, aes(x = Date, y = Family, fill = Abundance)) +
     legend.title = element_text(size = 11),
     legend.text = element_text(size = 18))
 
-ggsave("outputs/Fig5_family_heatmap.pdf", Fig_Family, width = 17, height = 11, units = "in")
+ggsave("outputs/Fig5.pdf", Fig_Family, width = 17, height = 11, units = "in")
 
-# 5. Prevalence-based core microbiome----------------
+#5 Prevalence-based core microbiome----------------
 
 sed_core_rel <- transform_sample_counts(sed, function(x) x / sum(x))
 core_mat <- as(otu_table(sed_core_rel), "matrix")
@@ -837,7 +837,7 @@ mar_80 <- get_core_asvs("Date", "March", 0.80)
 mar_90 <- get_core_asvs("Date", "March", 0.90)
 mar_100 <- get_core_asvs("Date", "March", 1.00)
 
-# Dataset-wide core sensitivity.
+# Dataset-wide core sensitivity
 global_sensitivity <- data.frame(
   Variable = "Regional",
   Group = "All samples",
@@ -857,7 +857,7 @@ global_core_80 <- get_global_core(0.80)
 global_core_90 <- get_global_core(0.90)
 global_core_100 <- get_global_core(1.00)
 
-# Shared site cores and shared sampling-period cores.
+# Shared site cores and shared sampling-period cores
 shared_sites_90 <- Reduce(intersect, list(bb_90, sg_90, bq_90))
 shared_sites_100 <- Reduce(intersect, list(bb_100, sg_100, bq_100))
 shared_dates_90 <- intersect(aug_90, mar_90)
@@ -870,7 +870,7 @@ print(shared_dates_100)
 print(global_core_90)
 print(global_core_100)
 
-# Figure 6: sensitivity of core size to prevalence threshold.
+# Figure 6: sensitivity of core size to prevalence threshold
 core_site_plot <- core_sensitivity_table %>%
   filter(Variable == "Site") %>%
   mutate(
@@ -943,9 +943,9 @@ Fig_Core <- patchwork::wrap_plots(
   nrow = 1,
   widths = c(1, 1))
 
-ggsave("outputs/Fig6_core_sensitivity.pdf", Fig_Core, width = 17, height = 11, units = "in")
+ggsave("outputs/Fig6.pdf", Fig_Core, width = 17, height = 11, units = "in")
 
-# 6. Supplementary phylum-level sediment and seawater profiles-------------
+#6 Supplementary phylum-level sediment and seawater profiles-------------
 
 library(dplyr)
 library(ggplot2)
@@ -966,9 +966,7 @@ all_no_other <- phylumabundance %>%
   select(Phylum, Type, Date, Abundance) %>%
   group_by(Phylum, Type, Date) %>%
   summarize(avg_abundance = mean(Abundance), .groups = "drop") %>%
-  # Filtrar filos >= 5%
   filter(avg_abundance >= 0.05) %>%
-  # Renormalizar para que sumen 1 dentro de Type × Date
   group_by(Type, Date) %>%
   mutate(avg_abundance = avg_abundance / sum(avg_abundance)) %>%
   ungroup()
@@ -977,10 +975,7 @@ colors=c(Actinomycetota="#E7EBFA", Acidobacteriota= "#FFFFF0", Chloroflexota="#A
          Bacteroidota="#BA55D3",Thermodesulfobacteriota="#698B22", Bacillota = "#CD8C95",Pseudomonadota= "#B8860B",
          Planctomycetota="#8FBC8F",	Verrucomicrobiota="#F0E68C")
 
-# Colores solo para los filos que quedan
 colors_no_other <- colors[names(colors) != "Other"]
-
-# Definir un tema común
 my_theme <- theme(
   axis.text.y.left = element_text(size = 14),
   axis.title.y = element_text(size = 16),
@@ -1010,12 +1005,11 @@ p_no_other <- ggplot(all_no_other,
         plot.tag.position = c(0.03, 0.98),
         legend.position = "none")
 
-# Por sitio, excluyendo Sea_Water
 all_sitio_no_other <- phylumabundance %>%
   filter(Type != "Sea_Water") %>%
   group_by(Phylum, Site, Date) %>%
   summarize(avg_abundance = mean(Abundance), .groups = "drop") %>%
-  filter(avg_abundance >= 0.05) %>%               # solo filos importantes
+  filter(avg_abundance >= 0.05) %>%               
   group_by(Site, Date) %>%
   mutate(avg_abundance = avg_abundance / sum(avg_abundance)) %>%
   ungroup()
@@ -1090,7 +1084,6 @@ w5_no_other <- ggplot(all_water_no_other,
         plot.tag.position = c(0.03, 0.98),
         legend.position = "none")
 
-# Agua por sitio, excluyendo Sediment
 all_sitio_water_no_other <- phylumabundance %>%
   filter(Type != "Sediment") %>%
   group_by(Phylum, Site, Date) %>%
@@ -1118,11 +1111,12 @@ w6_no_other <- ggplot(all_sitio_water_no_other,
   theme(plot.tag = element_text(size = 20, face = "bold"),
         plot.tag.position = c(0.03, 0.98))
 
-# Combinar plots
 WSP_no_other <- (p_no_other | p6_no_other) / (w5_no_other | w6_no_other)
 WSP_no_other
 
-# 7. Genus-level taxonomic resolution--------------
+ggsave("outputs/FigSup1.pdf", WSP_no_other, width = 17, height = 11, units = "in")
+
+#7 Genus-level taxonomic resolution--------------
 
 # Percentage of mean relative abundance unresolved at genus level for each
 # site-by-date sediment group. This supports the genus-resolution statement in
@@ -1130,12 +1124,10 @@ WSP_no_other
 
 obj <- Sed_16S
 
-# Eliminar taxa con abundancia total = 0, por seguridad
 obj <- prune_taxa(taxa_sums(obj) > 0, obj)
 
 otu <- as(otu_table(obj), "matrix")
 
-# AMPvis2 necesita taxa en filas
 if (!taxa_are_rows(obj)) {otu <- t(otu)}
 
 otu <- as.data.frame(otu, check.names = FALSE)
@@ -1143,10 +1135,8 @@ otu <- as.data.frame(otu, check.names = FALSE)
 tax <- as(tax_table(obj), "matrix") %>%
   as.data.frame(check.names = FALSE)
 
-# Asegurar mismo orden
 tax <- tax[rownames(otu), , drop = FALSE]
 
-# Mantener explícitamente la fracción no resuelta a género
 tax$Genus <- as.character(tax$Genus)
 
 tax$Genus[is.na(tax$Genus) |
@@ -1155,8 +1145,6 @@ tax$Genus[is.na(tax$Genus) |
 tax$Species <- tax$Genus
 
 otutable <- cbind(otu, tax)
-
-# Metadata
 
 env <- data.frame(sample_data(obj), check.names = FALSE)
 
@@ -1191,10 +1179,7 @@ gen <- amp_heatmap(
   labs(x = NULL, y = NULL) + ggtitle("")
 
 gen
-ggsave(
-  filename = "genus.pdf",
-  plot = gen, #nombre del plot
-  device = "pdf", #Formato vectorial para inkscape
-  width = 17, height =11, units = "in")
+ggsave("outputs/FigSup2.pdf", gen, width = 17, height = 11, units = "in")
+
 
 
