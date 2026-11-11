@@ -35,7 +35,7 @@ The first check verifies the downloaded ZIP **before** extraction. The last chec
 
 Install the packages listed at the top of each script before starting. Neither script installs software or changes library paths. The workflow used DADA2 **1.32.0**; the downstream analyses used R **4.5.3**, **microDecon 1.0.2** ([source commit `37307d8`](https://github.com/donaldtmcknight/microDecon/tree/37307d844384138fbc5a052e7f158a311b9f3291)), and missForest **1.6.1** with ranger **0.18.0**. Consult the two session reports for the R and package versions actually loaded in **each** run; use separate R environments if needed. No Excel application is required.
 
-Step -> Session report written on each run | Author's comparison copy in the release
+Step -> Session report written on each run 
 
 DADA2 and workbook creation -> `DADA2_output/sessionInfo.txt`, `provenance/sessionInfo_01_DADA2.txt`
 microDecon, ecological analyses and figures, `results/sessionInfo.txt`, `provenance/sessionInfo_02_Sediments.txt` 
